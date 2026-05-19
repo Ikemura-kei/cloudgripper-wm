@@ -1,0 +1,3 @@
+[submodule "third_party/stable-worldmodel"]
+	path = third_party/stable-worldmodel
+	url = https://github.com/Ikemura-kei/stable-worldmodel
