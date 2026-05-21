@@ -1,3 +1,6 @@
 [submodule "third_party/stable-worldmodel"]
 	path = third_party/stable-worldmodel
 	url = https://github.com/Ikemura-kei/stable-worldmodel
+[submodule "third_party/cloudgripper-api"]
+	path = third_party/cloudgripper-api
+	url = https://github.com/cloudgripper/cloudgripper-api.git
