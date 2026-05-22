@@ -36,7 +36,7 @@ cloudgripper-wm/
 │   │       └── launcher/
 │   │           └── local.yaml # W&B / launcher settings
 │   ├── train/
-│   │   ├── train.py           # DINO-WM training entry point (Hydra)
+│   │   ├── prejepa.py         # DINO-WM training entry point (Hydra)
 │   │   └── config/
 │   │       ├── train.yaml     # CloudGripper training config (fully self-contained)
 │   │       └── launcher/
@@ -90,8 +90,8 @@ uv run python scripts/data/collect.py
 uv run python scripts/data/collect.py robots=[robot1,robot2] episodes=100 output=data/run1.lance
 
 # Training (dataset_name is required)
-uv run python scripts/train/train.py dataset_name=$(pwd)/data/collect.lance
-uv run python scripts/train/train.py dataset_name=$(pwd)/data/collect.lance trainer.max_epochs=200
+uv run python scripts/train/prejepa.py dataset_name=$(pwd)/data/collect.lance
+uv run python scripts/train/prejepa.py dataset_name=$(pwd)/data/collect.lance trainer.max_epochs=200
 
 # Real-robot smoke test
 uv run python scripts/test_real_robot.py            # defaults to robot23
@@ -468,17 +468,27 @@ world = swm.World("cloudgripper/CubePush-v0", num_envs=8, image_shape=(64, 64))
 | `CloudGripperWorld` wrapper | ✅ Done | `cloudgripper_wm/world.py` |
 | Data collection script | ✅ Done | `scripts/data/collect.py`, Hydra-based, verified on robot23 |
 | Data inspection | ✅ Done | `scripts/inspect_data.py` — video player + action overlay |
-| Training script | ✅ Done | `scripts/train/train.py`, DINO-WM via stable-worldmodel's prejepa pipeline |
+| Training script | ✅ Done | `scripts/train/prejepa.py`, DINO-WM via stable-worldmodel's prejepa pipeline |
 | Tests | ❌ Not written | Test files exist but are empty |
 | Scripted policies | ❌ Not written | `policies/random_push.py`, `heuristic_grasp.py` are stubs |
 | Reward & success implementations | ❌ Deferred | Only needed for RL/MPC evaluation |
 
 ## Training
 
-The training script (`scripts/train/train.py`) wraps stable-worldmodel's DINO-WM (`prejepa`) pipeline. It uses `@hydra.main` with a fully self-contained CloudGripper config at `scripts/train/config/train.yaml` — no modifications to the stable-worldmodel submodule are needed.
+### PreJEPA vs DINO-WM
+
+**PreJEPA** is the training algorithm — a joint-embedding predictive architecture that learns to predict future embeddings from past ones (I-JEPA/V-JEPA family). The script is named `prejepa.py` after the algorithm.
+
+**DINO-WM** is a specific instantiation of PreJEPA that uses a DINOv2 encoder as the backbone. With `backbone.name: dinov2_small` (the default), `prejepa.py` trains DINO-WM. Swapping to a different backbone (MAE, ResNet, etc.) still uses the same PreJEPA training loop.
+
+Each world model variant gets its own script: `scripts/train/prejepa.py` for PreJEPA-family models, `scripts/train/lewm.py` for LeWM when added, etc.
+
+### Running
+
+`scripts/train/prejepa.py` wraps stable-worldmodel's PreJEPA pipeline with a fully self-contained CloudGripper config at `scripts/train/config/train.yaml` — no modifications to the stable-worldmodel submodule are needed.
 
 ```bash
-uv run python scripts/train/train.py dataset_name=$(pwd)/data/collect.lance
+uv run python scripts/train/prejepa.py dataset_name=$(pwd)/data/collect.lance
 ```
 
 ### Training config (`scripts/train/config/train.yaml`)
@@ -490,11 +500,11 @@ Key CloudGripper-specific settings (all others match stable-worldmodel defaults)
 | `frameskip` | `1` | No temporal skip — robot data is already at action frequency |
 | `wm.encoding.action` | `10` | Embed 5-dim delta actions into 10-dim space |
 | `wm.encoding.state` | `10` | Embed 5-dim commanded target into 10-dim space |
-| `backbone.name` | `dinov2_small` | DINOv2 small encoder (images upscaled 64→224 internally) |
-| `image_size` | `224` | DINOv2 input size |
+| `backbone.name` | `dinov2_small` | DINOv2 backbone → this makes it DINO-WM specifically |
+| `image_size` | `224` | DINOv2 input size (images upscaled 64→224 internally) |
 | `trainer.max_epochs` | `100` | Default training length |
 
-The world model trains on `"pixels"` (top camera, 64×64 upscaled to 224×224) and uses `"action"` + `"state"` as conditioning. No reward signal — fully self-supervised.
+The world model trains on `"pixels"` (top camera) and uses `"action"` + `"state"` as conditioning. No reward signal — fully self-supervised.
 
 ### Decoupling from stable-worldmodel
 
