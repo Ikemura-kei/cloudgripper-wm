@@ -75,6 +75,11 @@ optimizer:
   lr: 5e-4
   weight_decay: 0.0
 
+# --- Scheduler ---
+scheduler:
+  type: CosineAnnealingLR
+  T_max: ${trainer.max_epochs}
+
 # --- Trainer ---
 trainer:
   max_epochs: 100

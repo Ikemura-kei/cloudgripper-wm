@@ -112,7 +112,7 @@ def run(cfg) -> None:
     world_model = spt.Module(
         model=world_model,
         forward=partial(dinowm_forward, cfg=cfg),
-        optim={'model_opt': {'modules': 'model', 'optimizer': dict(cfg.optimizer)}},
+        optim={'model_opt': {'modules': 'model', 'optimizer': dict(cfg.optimizer), 'scheduler': dict(cfg.scheduler)}},
     )
 
     # --- Training ---
