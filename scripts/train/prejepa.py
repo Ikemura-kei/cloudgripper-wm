@@ -35,7 +35,7 @@ from prejepa import (  # noqa: E402
 )
 
 
-@hydra.main(version_base=None, config_path='./config', config_name='train')
+@hydra.main(version_base=None, config_path='./config', config_name='prejepa')
 def run(cfg) -> None:
     # --- Dataset ---
     encoding_keys = list(cfg.wm.get('encoding', {}).keys())

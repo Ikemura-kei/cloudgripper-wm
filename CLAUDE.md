@@ -38,7 +38,7 @@ cloudgripper-wm/
 │   ├── train/
 │   │   ├── prejepa.py         # DINO-WM training entry point (Hydra)
 │   │   └── config/
-│   │       ├── train.yaml     # CloudGripper training config (fully self-contained)
+│   │       ├── prejepa.yaml   # CloudGripper PreJEPA training config (fully self-contained)
 │   │       └── launcher/
 │   │           └── local.yaml
 │   ├── inspect_data.py        # Visualize collected Lance dataset as video
@@ -485,13 +485,13 @@ Each world model variant gets its own script: `scripts/train/prejepa.py` for Pre
 
 ### Running
 
-`scripts/train/prejepa.py` wraps stable-worldmodel's PreJEPA pipeline with a fully self-contained CloudGripper config at `scripts/train/config/train.yaml` — no modifications to the stable-worldmodel submodule are needed.
+`scripts/train/prejepa.py` wraps stable-worldmodel's PreJEPA pipeline with a fully self-contained CloudGripper config at `scripts/train/config/prejepa.yaml` — no modifications to the stable-worldmodel submodule are needed.
 
 ```bash
 uv run python scripts/train/prejepa.py dataset_name=$(pwd)/data/collect.lance
 ```
 
-### Training config (`scripts/train/config/train.yaml`)
+### Training config (`scripts/train/config/prejepa.yaml`)
 
 Key CloudGripper-specific settings (all others match stable-worldmodel defaults):
 
