@@ -27,14 +27,22 @@ cloudgripper-wm/
 │   │   ├── __init__.py
 │   │   ├── random_push.py    # Scripted random pushing policy (not yet implemented)
 │   │   └── heuristic_grasp.py  # Scripted pick-and-place policy (not yet implemented)
-│   └── configs/               # Hydra YAML configs for collection and training
-│       ├── collect.yaml
-│       └── train.yaml
+│   └── configs/               # (unused — configs live under scripts/data/config and scripts/train/config)
 ├── scripts/
-│   ├── collect.py             # Data collection entry point (working)
+│   ├── data/
+│   │   ├── collect.py         # Data collection entry point (Hydra, working)
+│   │   └── config/
+│   │       ├── collect.yaml   # Collection config (robots, episodes, dwell, etc.)
+│   │       └── launcher/
+│   │           └── local.yaml # W&B / launcher settings
+│   ├── train/
+│   │   ├── train.py           # DINO-WM training entry point (Hydra)
+│   │   └── config/
+│   │       ├── train.yaml     # CloudGripper training config (fully self-contained)
+│   │       └── launcher/
+│   │           └── local.yaml
 │   ├── inspect_data.py        # Visualize collected Lance dataset as video
-│   ├── test_real_robot.py     # Interactive smoke test on real hardware
-│   └── train.py               # Training entry point (not yet implemented)
+│   └── test_real_robot.py     # Interactive smoke test on real hardware
 ├── tests/
 │   ├── conftest.py            # Shared fixtures (empty — not yet written)
 │   ├── test_env_base.py       # (empty — not yet written)
@@ -70,6 +78,28 @@ cloudgripper-wm/
 uv sync                    # install all deps from lockfile
 uv run python <script>     # run anything in the venv
 uv run pytest tests/       # run tests
+```
+
+### Scripts
+
+All scripts use Hydra — any config key can be overridden on the CLI.
+
+```bash
+# Data collection (defaults: robot23, 10 episodes, 0.5s dwell)
+uv run python scripts/data/collect.py
+uv run python scripts/data/collect.py robots=[robot1,robot2] episodes=100 output=data/run1.lance
+
+# Training (dataset_name is required)
+uv run python scripts/train/train.py dataset_name=$(pwd)/data/collect.lance
+uv run python scripts/train/train.py dataset_name=$(pwd)/data/collect.lance trainer.max_epochs=200
+
+# Real-robot smoke test
+uv run python scripts/test_real_robot.py            # defaults to robot23
+uv run python scripts/test_real_robot.py --robot robot5 --steps 20
+
+# Data inspection
+uv run python scripts/inspect_data.py data/collect.lance
+uv run python scripts/inspect_data.py data/collect.lance --save-dir /tmp/videos
 ```
 
 ### Dev robot
@@ -436,24 +466,39 @@ world = swm.World("cloudgripper/CubePush-v0", num_envs=8, image_shape=(64, 64))
 | `RobotPool` | ✅ Done | Always required, even for 1 robot |
 | Gymnasium registration | ✅ Done | All 4 env IDs registered |
 | `CloudGripperWorld` wrapper | ✅ Done | `cloudgripper_wm/world.py` |
-| Task-agnostic data collection | ✅ Done | `scripts/collect.py`, verified on robot23 |
+| Data collection script | ✅ Done | `scripts/data/collect.py`, Hydra-based, verified on robot23 |
 | Data inspection | ✅ Done | `scripts/inspect_data.py` — video player + action overlay |
+| Training script | ✅ Done | `scripts/train/train.py`, DINO-WM via stable-worldmodel's prejepa pipeline |
 | Tests | ❌ Not written | Test files exist but are empty |
 | Scripted policies | ❌ Not written | `policies/random_push.py`, `heuristic_grasp.py` are stubs |
-| **Training** | ⬅ **Next** | Adapt DINO-WM from `stable-worldmodel/scripts/train/prejepa.py` |
 | Reward & success implementations | ❌ Deferred | Only needed for RL/MPC evaluation |
 
-## Training (Next Step)
+## Training
 
-The reference training script is `third_party/stable-worldmodel/scripts/train/prejepa.py` (DINO-WM). It uses Hydra for config.
+The training script (`scripts/train/train.py`) wraps stable-worldmodel's DINO-WM (`prejepa`) pipeline. It uses `@hydra.main` with a fully self-contained CloudGripper config at `scripts/train/config/train.yaml` — no modifications to the stable-worldmodel submodule are needed.
 
-To adapt it for CloudGripper:
-1. Point the data config at the collected Lance dataset
-2. Make sure `image_shape`, `action_dim=5`, and dataset path are correct in the Hydra config
-3. Reference config: `third_party/stable-worldmodel/scripts/train/config/` — look at an existing env config (e.g. `data/pusht.yaml`) as a template
-4. Run: `uv run python third_party/stable-worldmodel/scripts/train/prejepa.py data=cloudgripper`
+```bash
+uv run python scripts/train/train.py dataset_name=$(pwd)/data/collect.lance
+```
 
-The world model trains on `"pixels"` (top camera, 64×64) and `"action"` (5-dim delta) from the Lance dataset. No reward signal needed — it's self-supervised.
+### Training config (`scripts/train/config/train.yaml`)
+
+Key CloudGripper-specific settings (all others match stable-worldmodel defaults):
+
+| Key | Value | Reason |
+|-----|-------|--------|
+| `frameskip` | `1` | No temporal skip — robot data is already at action frequency |
+| `wm.encoding.action` | `10` | Embed 5-dim delta actions into 10-dim space |
+| `wm.encoding.state` | `10` | Embed 5-dim commanded target into 10-dim space |
+| `backbone.name` | `dinov2_small` | DINOv2 small encoder (images upscaled 64→224 internally) |
+| `image_size` | `224` | DINOv2 input size |
+| `trainer.max_epochs` | `100` | Default training length |
+
+The world model trains on `"pixels"` (top camera, 64×64 upscaled to 224×224) and uses `"action"` + `"state"` as conditioning. No reward signal — fully self-supervised.
+
+### Decoupling from stable-worldmodel
+
+The training logic imports helpers from `third_party/stable-worldmodel/scripts/train/prejepa.py` at runtime via `sys.path`, but makes **zero modifications to any file in the submodule**. The stable-worldmodel submodule is kept at its upstream state.
 
 ## Tests
 
