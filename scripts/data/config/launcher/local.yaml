@@ -1,0 +1,9 @@
+# @package _global_
+defaults:
+  - override /hydra/launcher: basic
+
+wandb:
+  enabled: false
+  config:
+    project: cloudgripper-wm
+    name: ${output_name}

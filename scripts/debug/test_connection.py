@@ -7,6 +7,7 @@ import cv2
 
 while True:
     image, timestamp = robot.getImageTop()
+    print(image.shape, timestamp)
     cv2.imshow("Cloudgripper top camera stream", image)
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
