@@ -83,7 +83,7 @@ scheduler:
 # --- Trainer ---
 trainer:
   max_epochs: 100
-  strategy: ddp
+  strategy: auto
   devices: auto
   accelerator: gpu
   precision: 16-mixed
