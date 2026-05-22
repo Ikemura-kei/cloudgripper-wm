@@ -15,3 +15,5 @@ multirun/
 # Secrets — never commit
 .env
 *.token
+
+data/*

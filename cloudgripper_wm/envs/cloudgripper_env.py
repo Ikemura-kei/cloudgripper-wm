@@ -25,7 +25,7 @@ class CloudGripperEnv(gym.Env):
     already wrote into info.
     """
 
-    metadata = {"render_modes": ["rgb_array"]}
+    metadata = {"render_modes": ["rgb_array"], "render_fps": 2}
 
     def __init__(
         self,

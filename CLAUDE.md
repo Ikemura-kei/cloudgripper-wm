@@ -10,37 +10,42 @@ The goal is to collect real-robot interaction data in parallel across multiple r
 
 ```
 cloudgripper-wm/
-├── cloudgripper_wm/          # Main package (to be created)
+├── cloudgripper_wm/
 │   ├── __init__.py
+│   ├── world.py               # CloudGripperWorld wrapper (handles RobotPool + swm.World setup)
 │   ├── envs/
 │   │   ├── __init__.py        # gymnasium.register() for all task env IDs
 │   │   ├── cloudgripper_env.py  # Core Gymnasium env wrapping CloudGripper API
-│   │   └── robot_pool.py     # Thread-safe pool assigning physical robots to env instances
+│   │   └── robot_pool.py     # Thread-safe singleton assigning robot names to env instances
 │   ├── tasks/
 │   │   ├── __init__.py        # TASK_REGISTRY dict, get_task() factory
-│   │   ├── base.py            # Abstract Task base class
-│   │   ├── cube_push.py       # CubePushTask
-│   │   ├── cube_stack.py      # CubeStackTask
-│   │   └── rope_manip.py      # RopeManipTask
+│   │   ├── base.py            # Abstract Task base class + DEFAULT_HOME_POS
+│   │   ├── cube_push.py       # CubePushTask (stub)
+│   │   ├── cube_stack.py      # CubeStackTask (stub)
+│   │   └── rope_manip.py      # RopeManipTask (stub)
 │   ├── policies/
 │   │   ├── __init__.py
-│   │   ├── random_push.py    # Scripted random pushing policy
-│   │   └── heuristic_grasp.py  # Scripted pick-and-place policy
+│   │   ├── random_push.py    # Scripted random pushing policy (not yet implemented)
+│   │   └── heuristic_grasp.py  # Scripted pick-and-place policy (not yet implemented)
 │   └── configs/               # Hydra YAML configs for collection and training
 │       ├── collect.yaml
 │       └── train.yaml
 ├── scripts/
-│   ├── collect.py             # Data collection entry point
-│   └── train.py               # Training entry point
+│   ├── collect.py             # Data collection entry point (working)
+│   ├── inspect_data.py        # Visualize collected Lance dataset as video
+│   ├── test_real_robot.py     # Interactive smoke test on real hardware
+│   └── train.py               # Training entry point (not yet implemented)
 ├── tests/
-│   ├── conftest.py            # Shared fixtures (mock robot, env factories)
-│   ├── test_env_base.py       # Task-agnostic CloudGripperEnv tests
-│   ├── test_env_tasks.py      # Task-specific env tests (one per task)
-│   ├── test_tasks.py          # Task classes in isolation (reward, success, termination)
-│   ├── test_robot_pool.py     # RobotPool thread-safety tests
-│   └── test_registration.py   # Gymnasium registration + swm.World integration
+│   ├── conftest.py            # Shared fixtures (empty — not yet written)
+│   ├── test_env_base.py       # (empty — not yet written)
+│   ├── test_env_tasks.py      # (empty — not yet written)
+│   ├── test_tasks.py          # (empty — not yet written)
+│   ├── test_robot_pool.py     # (empty — not yet written)
+│   └── test_registration.py   # (empty — not yet written)
 ├── third_party/
+│   ├── cloudgripper-api/      # Git submodule — has local pyproject.toml for uv editable install
 │   └── stable-worldmodel/     # Git submodule (editable dep)
+├── data/                      # Collected datasets (gitignored)
 ├── pyproject.toml
 ├── uv.lock
 └── CLAUDE.md                  # This file
@@ -53,6 +58,7 @@ cloudgripper-wm/
   - Provides: `swm.World`, `swm.data.load_dataset`, `EnvPool`, `MegaWrapper`, `Policy`, `CEMSolver`, `WorldModelPolicy`, etc.
 - **cloudgripper-api** — the `GripperRobot` class from `client.cloudgripper_client`
   - Repo: https://github.com/cloudgripper/cloudgripper-api
+  - Installed as git submodule under `third_party/cloudgripper-api/` with a local `pyproject.toml` added for uv editable install (the upstream repo has no build system)
   - Also has `GripperRobotMock` in `client.cloudgripper_client_mock` for testing without hardware
 - **PyTorch** — for world model training
 - **Gymnasium** — env interface (`gymnasium.Env`)
@@ -157,9 +163,16 @@ class Policy:
 ## CloudGripperEnv Design Decisions
 
 ### Observation space
-- **`"pixels"`**: top camera image (primary — this is what MegaWrapper/World uses)
-- **`"pixels_base"`**: base camera image (secondary, stored in info for dataset but not required by MegaWrapper)
-- **`"state"`**: flat float32 vector of `[x, y, z, rotation_normalized, gripper]`, all in [0, 1]. This is the *commanded target position* (`self._target_pos`), not the raw readback from the robot (which may lag).
+
+**`observation_space`** only contains `"state"` — images are NOT in the obs dict:
+- **`"state"`**: float32 vector `[x, y, z, rotation_norm, gripper]`, all in [0, 1]. This is `self._target_pos` (commanded target), not the actual robot position which may lag.
+
+**Why images are not in obs:** `MegaWrapper` stacks `AddPixelsWrapper` → `EverythingToInfoWrapper`. `AddPixelsWrapper` calls `env.render()` and writes `"pixels"` into info. `EverythingToInfoWrapper` then asserts obs keys are not already in info before merging them. If obs had `"pixels"`, this assertion would fail. So images flow through `render()`, not obs.
+
+**Where images end up in the dataset:**
+- `env.render()` → top camera → `AddPixelsWrapper` writes `"pixels"` to info → stored in dataset as `"pixels"` (JPEG-encoded, 64×64 after MegaWrapper resize)
+- `info["pixels_base"]` → base camera → stored in dataset as `"pixels_base"` (JPEG-encoded, native 480×640)
+- `world.infos["pixels"]` has shape `(num_envs, 1, 64, 64, 3)` during collection
 
 ### Action space (delta)
 - `Box(-max_delta, max_delta, shape=(5,), dtype=float32)` → `[Δx, Δy, Δz, Δrotation, Δgripper]`
@@ -181,7 +194,7 @@ self.robot.move_gripper(float(grip))          # 0=closed, 1=open
 
 #### Internal position tracking
 - `self._target_pos` is the *commanded* target, not the actual robot position (which may lag due to movement time).
-- On `reset()`, set `self._target_pos` to `self.task.home_pos()` if task is set, otherwise `DEFAULT_HOME_POS` `[0.5, 0.5, 1.0, 0.0, 1.0]` (center xy, top z, 0° rotation, gripper open).
+- On `reset()`, set `self._target_pos` to `self.task.home_pos()` if task is set, otherwise `DEFAULT_HOME_POS` `[0.5, 0.5, 0.0, 0.0, 1.0]` (center xy, bottom z, 0° rotation, gripper open). Note: z=0.0 means arm down — calibrated from real robot testing.
 - The `"state"` in the observation space reports `self._target_pos` (the intended target). Optionally, a `"state_actual"` key can store the readback from `robot.get_state()` if the caller wants to compare.
 - Do NOT re-sync `_target_pos` from `get_state()` every step — it adds latency and the robot may not have reached the target yet. Only re-sync on `reset()` if needed.
 
@@ -199,10 +212,59 @@ self.robot.move_gripper(float(grip))          # 0=closed, 1=open
 - Episodes are fixed-length (truncation via `max_episode_steps`). Early termination only possible when a task is set and `task.check_terminated()` returns True.
 
 ### Multi-robot parallelism via RobotPool
-- `World` creates `num_envs` copies of the env via `gym.make` with identical kwargs
-- A thread-safe `RobotPool` singleton assigns a unique robot name to each env instance on `__init__`
-- `env.close()` returns the robot name to the pool
-- Constraint: `num_envs ≤ number_of_available_robots`
+
+**RobotPool is always required** — even for a single robot. Call `RobotPool.configure(["robot23"])` before creating any envs. `CloudGripperEnv.__init__` calls `RobotPool.acquire()` and `close()` calls `RobotPool.release()`. The interface is identical for 1 or N robots.
+
+```python
+from cloudgripper_wm.envs.robot_pool import RobotPool
+
+RobotPool.configure(["robot23"])            # 1 robot
+RobotPool.configure(["robot1", "robot2"])   # 2 robots — identical call site
+```
+
+- `swm.World` creates `num_envs` copies of the env via `gym.make` with identical kwargs
+- Constraint: `num_envs == len(robot_names)` passed to `RobotPool.configure()`
+- Use `CloudGripperWorld` (see below) to handle this automatically
+
+### CloudGripperWorld wrapper (`cloudgripper_wm/world.py`)
+
+Thin wrapper around `swm.World` that handles RobotPool configuration and token resolution:
+
+```python
+from cloudgripper_wm.world import CloudGripperWorld
+from stable_worldmodel.policy import RandomPolicy
+
+# 1 robot
+world = CloudGripperWorld(robot_names=["robot23"])
+
+# 8 robots — identical interface
+world = CloudGripperWorld(robot_names=["robot1", "robot2", ..., "robot8"])
+
+world.set_policy(RandomPolicy())
+world.collect("data/collect.lance", episodes=100)
+world.close()
+```
+
+Constructor kwargs: `robot_names`, `env_name` (default `"cloudgripper/Gripper-v0"`), `image_shape` (default `(64, 64)`), `max_episode_steps`, `token` (falls back to `CLOUDGRIPPER_TOKEN` env var), `use_mock`, `dwell_time`, `max_delta`. Any extra kwargs are forwarded to `swm.World` / `gym.make`.
+
+### Lance dataset schema
+
+Collected datasets are stored in Lance format. Each row is one step:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `episode_idx` | int32 | Episode number |
+| `step_idx` | int32 | Step within episode |
+| `pixels` | bytes | Top camera JPEG, 64×64 after MegaWrapper resize |
+| `pixels_base` | bytes | Base camera JPEG, native 480×640 |
+| `state` | float[5] | `[x, y, z, rot_norm, gripper]` — commanded target pos |
+| `action` | float[5] | `[Δx, Δy, Δz, Δrot, Δgrip]` — delta action taken |
+| `reward` | float[1] | Always 0.0 for task-agnostic collection |
+| `terminated` | float[1] | |
+| `truncated` | float[1] | |
+| `id` | float[1] | Episode UUID (from EverythingToInfoWrapper) |
+
+Decode images: `cv2.imdecode(np.frombuffer(row["pixels"], np.uint8), cv2.IMREAD_COLOR)`
 
 ## Task System
 
@@ -238,7 +300,7 @@ CloudGripperEnv(task=None)              CloudGripperEnv(task="cube_push")
 from abc import ABC, abstractmethod
 import numpy as np
 
-DEFAULT_HOME_POS = np.array([0.5, 0.5, 1.0, 0.0, 1.0], dtype=np.float32)
+DEFAULT_HOME_POS = np.array([0.5, 0.5, 0.0, 0.0, 1.0], dtype=np.float32)
 
 class Task(ABC):
     """Base class for CloudGripper tasks. Subclass to define reward and success."""
@@ -365,16 +427,33 @@ world = swm.World("cloudgripper/Gripper-v0", num_envs=8, image_shape=(64, 64))
 world = swm.World("cloudgripper/CubePush-v0", num_envs=8, image_shape=(64, 64))
 ```
 
-## Implementation Order
+## Implementation Status
 
-1. **`Task` base class + stubs** — `base.py` with abstract interface + `DEFAULT_HOME_POS`, then `CubePushTask`, `CubeStackTask`, `RopeManipTask` as stubs (reward=0, success=False). Task registry in `tasks/__init__.py` with `get_task()` returning `None` for `task_name=None`. **Tests:** `test_tasks.py`.
-2. **`CloudGripperEnv`** — single robot, Gymnasium-compliant, `task: str | None = None`. When `task=None`: reward=0, terminated=False, no success key. When task is set: delegate to Task object. Include mock support via `GripperRobotMock`. **Tests:** `test_env_base.py`, `test_env_tasks.py`.
-3. **`RobotPool`** — thread-safe robot name assignment for multi-env. **Tests:** `test_robot_pool.py`.
-4. **Gymnasium registration** — `cloudgripper/Gripper-v0` (task-agnostic) + one ID per task. **Tests:** `test_registration.py`.
-5. **Task-agnostic data collection** — `world.collect()` with `cloudgripper/Gripper-v0` + `RandomPolicy`. This is the primary path for world model training data.
-6. **Scripted policies** — task-aware pushing/grasping policies for richer training data.
-7. **Training** — adapt DINO-WM baseline from `stable-worldmodel/scripts/train/prejepa.py` to CloudGripper observations.
-8. **Reward & success implementations** — fill in real `compute_reward()` / `check_success()` for each task when running RL baselines or MPC evaluation.
+| Step | Status | Notes |
+|------|--------|-------|
+| Task base class + stubs | ✅ Done | `tasks/base.py`, stubs in `cube_push/stack/rope_manip.py` |
+| `CloudGripperEnv` | ✅ Done | Tested on robot23 |
+| `RobotPool` | ✅ Done | Always required, even for 1 robot |
+| Gymnasium registration | ✅ Done | All 4 env IDs registered |
+| `CloudGripperWorld` wrapper | ✅ Done | `cloudgripper_wm/world.py` |
+| Task-agnostic data collection | ✅ Done | `scripts/collect.py`, verified on robot23 |
+| Data inspection | ✅ Done | `scripts/inspect_data.py` — video player + action overlay |
+| Tests | ❌ Not written | Test files exist but are empty |
+| Scripted policies | ❌ Not written | `policies/random_push.py`, `heuristic_grasp.py` are stubs |
+| **Training** | ⬅ **Next** | Adapt DINO-WM from `stable-worldmodel/scripts/train/prejepa.py` |
+| Reward & success implementations | ❌ Deferred | Only needed for RL/MPC evaluation |
+
+## Training (Next Step)
+
+The reference training script is `third_party/stable-worldmodel/scripts/train/prejepa.py` (DINO-WM). It uses Hydra for config.
+
+To adapt it for CloudGripper:
+1. Point the data config at the collected Lance dataset
+2. Make sure `image_shape`, `action_dim=5`, and dataset path are correct in the Hydra config
+3. Reference config: `third_party/stable-worldmodel/scripts/train/config/` — look at an existing env config (e.g. `data/pusht.yaml`) as a template
+4. Run: `uv run python third_party/stable-worldmodel/scripts/train/prejepa.py data=cloudgripper`
+
+The world model trains on `"pixels"` (top camera, 64×64) and `"action"` (5-dim delta) from the Lance dataset. No reward signal needed — it's self-supervised.
 
 ## Tests
 
