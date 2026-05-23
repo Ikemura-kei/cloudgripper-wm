@@ -1,6 +1,6 @@
 dataset:
   num_steps: ${eval:'${wm.num_preds} + ${wm.history_size}'}
-  frameskip: 5
+  frameskip: 1
   name: cloudgripper.lance
   keys_to_load:
     - pixels
