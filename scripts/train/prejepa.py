@@ -74,15 +74,14 @@ def run(cfg) -> None:
         dataset, [cfg.train_split, 1 - cfg.train_split], generator=rnd_gen
     )
 
-    # fork avoids spawn's pickling requirement for functools.partial transforms
     train_loader = DataLoader(
         train_set, batch_size=cfg.batch_size, num_workers=cfg.num_workers,
         drop_last=True, persistent_workers=True, pin_memory=True,
-        shuffle=True, generator=rnd_gen, multiprocessing_context='fork',
+        shuffle=True, generator=rnd_gen, multiprocessing_context='spawn',
     )
     val_loader = DataLoader(
         val_set, batch_size=cfg.batch_size, num_workers=cfg.num_workers,
-        pin_memory=True, multiprocessing_context='fork',
+        pin_memory=True, multiprocessing_context='spawn',
     )
 
     # --- Model ---
