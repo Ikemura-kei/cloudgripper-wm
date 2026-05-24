@@ -150,16 +150,17 @@ def run(cfg):
         generator=rnd_gen,
     )
 
+    mp_ctx = {'multiprocessing_context': 'fork'} if cfg.loader.num_workers > 0 else {}
     train = torch.utils.data.DataLoader(
         train_set,
         **cfg.loader,
         generator=rnd_gen,
-        multiprocessing_context='spawn',
+        **mp_ctx,
     )
     val_cfg = {**cfg.loader}
     val_cfg['shuffle'] = False
     val_cfg['drop_last'] = False
-    val = torch.utils.data.DataLoader(val_set, **val_cfg, multiprocessing_context='spawn')
+    val = torch.utils.data.DataLoader(val_set, **val_cfg, **mp_ctx)
 
     ##############################
     ##       model / optim      ##
