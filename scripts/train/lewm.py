@@ -36,6 +36,22 @@ def _reduce_method_patched(m):
 multiprocessing.reduction.ForkingPickler.register(types.MethodType, _reduce_method_patched)
 
 
+# stable_pretraining 0.1.4 bug: on_train_start calls len(self.optimizers()) but Lightning
+# returns a single optimizer (not a list) when only one is configured. Patch to normalize.
+_orig_on_train_start = spt.Module.on_train_start
+
+def _on_train_start_compat(self):
+    _orig = self.optimizers
+    def _list_wrap(*args, **kwargs):
+        r = _orig(*args, **kwargs)
+        return r if isinstance(r, (list, tuple)) else [r]
+    self.optimizers = _list_wrap
+    _orig_on_train_start(self)
+    del self.optimizers
+
+spt.Module.on_train_start = _on_train_start_compat
+
+
 def get_img_preprocessor(source: str, target: str, img_size: int = 224):
     imagenet_stats = dt.dataset_stats.ImageNet
     to_image = dt.transforms.ToImage(
