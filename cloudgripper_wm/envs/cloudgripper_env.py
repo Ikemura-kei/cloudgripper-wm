@@ -122,7 +122,7 @@ class CloudGripperEnv(gym.Env):
         if self._last_top_img is None:
             top_img, _ = self.robot.getImageTop()
             self._last_top_img = top_img
-        return self._last_top_img
+        return cv2.cvtColor(self._last_top_img, cv2.COLOR_BGR2RGB)
 
     def close(self) -> None:
         RobotPool.release(self._robot_name)
