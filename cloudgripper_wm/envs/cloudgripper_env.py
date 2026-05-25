@@ -141,19 +141,19 @@ class CloudGripperEnv(gym.Env):
             self.robot.move_xy(float(x), float(y))
             self._last_sent_pos[0] = x
             self._last_sent_pos[1] = y
-            time.sleep(0.05)
+            time.sleep(0.015)
         if d[2] >= 0.01:
             self.robot.move_z(float(z))
             self._last_sent_pos[2] = z
-            time.sleep(0.05)
+            time.sleep(0.015)
         if d[3] >= 0.01:
             self.robot.rotate(int(float(rot_norm) * 180))
             self._last_sent_pos[3] = rot_norm
-            time.sleep(0.05)
+            time.sleep(0.015)
         if d[4] >= 0.01:
             self.robot.move_gripper(float(grip))
             self._last_sent_pos[4] = grip
-            time.sleep(0.05)
+            time.sleep(0.015)
 
     def _get_current_state(self) -> np.ndarray:
         """Read actual robot state and return as [x, y, z, rot_norm, gripper] in [0,1]."""
