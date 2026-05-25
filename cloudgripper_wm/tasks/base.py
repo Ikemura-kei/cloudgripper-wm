@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 
-DEFAULT_HOME_POS = np.array([0.5, 0.5, 0.0, 0.0, 1.0], dtype=np.float32)
+DEFAULT_HOME_POS = np.array([0.5, 0.5, 0.0, 0.0, 0.5], dtype=np.float32)
 
 
 class Task(ABC):

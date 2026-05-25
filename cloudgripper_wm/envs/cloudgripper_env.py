@@ -86,11 +86,12 @@ class CloudGripperEnv(gym.Env):
         time.sleep(self.dwell_time)
 
         top_img, _ = self.robot.getImageTop()
-        base_img, _ = self.robot.getImageBase()
+        base_img_raw, _ = self.robot.getImageBase()
         self._last_top_img = top_img
+        base_img = cv2.cvtColor(base_img_raw, cv2.COLOR_BGR2RGB)
 
         obs = {"state": self._get_current_state()}
-        info = {"pixels_base": base_img, "target_state": self._target_pos.copy()}
+        info = {"target_state": self._target_pos.copy(), "pixels_base": base_img}
         return obs, info
 
     def step(self, action: np.ndarray) -> tuple[dict, float, bool, bool, dict]:
@@ -101,11 +102,12 @@ class CloudGripperEnv(gym.Env):
         time.sleep(self.dwell_time)
 
         top_img, _ = self.robot.getImageTop()
-        base_img, _ = self.robot.getImageBase()
+        base_img_raw, _ = self.robot.getImageBase()
         self._last_top_img = top_img
+        base_img = cv2.cvtColor(base_img_raw, cv2.COLOR_BGR2RGB)
 
         obs = {"state": self._get_current_state()}
-        info: dict = {"pixels_base": base_img, "target_state": self._target_pos.copy()}
+        info: dict = {"target_state": self._target_pos.copy(), "pixels_base": base_img}
 
         if self.task is not None:
             reward = self.task.compute_reward(obs, action, info)

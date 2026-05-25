@@ -33,18 +33,40 @@ def decode_jpeg(data: bytes) -> np.ndarray:
     return cv2.imdecode(arr, cv2.IMREAD_COLOR)
 
 
-def make_text_panel(width: int, state: list[float], action: list[float]) -> np.ndarray:
+def make_text_panel(
+    width: int,
+    state: list[float],
+    action: list[float],
+    target_state: list[float] | None = None,
+) -> np.ndarray:
     panel = np.zeros((160, width, 3), dtype=np.uint8)
     font, scale, thick = cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1
-    col_w = width // 2
 
-    cv2.putText(panel, "STATE", (10, 20), font, 0.5, (200, 200, 200), 1)
-    for i, (label, val) in enumerate(zip(STATE_LABELS, state)):
-        cv2.putText(panel, f"{label}: {val:+.3f}", (10, 45 + i * 22), font, scale, (100, 220, 100), thick)
+    if target_state is not None:
+        col_w = width // 3
+        # current state | target state | action
+        cv2.putText(panel, "STATE (actual)", (10, 20), font, 0.5, (200, 200, 200), 1)
+        for i, (label, val) in enumerate(zip(STATE_LABELS, state)):
+            cv2.putText(panel, f"{label}: {val:+.3f}", (10, 45 + i * 22), font, scale, (100, 220, 100), thick)
 
-    cv2.putText(panel, "ACTION", (col_w + 10, 20), font, 0.5, (200, 200, 200), 1)
-    for i, (label, val) in enumerate(zip(ACTION_LABELS, action)):
-        cv2.putText(panel, f"{label}: {val:+.3f}", (col_w + 10, 45 + i * 22), font, scale, (100, 180, 255), thick)
+        cv2.putText(panel, "TARGET STATE", (col_w + 10, 20), font, 0.5, (200, 200, 200), 1)
+        for i, (label, sv, tv) in enumerate(zip(STATE_LABELS, state, target_state)):
+            diff = tv - sv
+            color = (100, 180, 255) if abs(diff) < 0.02 else (50, 100, 255)
+            cv2.putText(panel, f"{label}: {tv:+.3f} ({diff:+.3f})", (col_w + 10, 45 + i * 22), font, scale, color, thick)
+
+        cv2.putText(panel, "ACTION", (col_w * 2 + 10, 20), font, 0.5, (200, 200, 200), 1)
+        for i, (label, val) in enumerate(zip(ACTION_LABELS, action)):
+            cv2.putText(panel, f"{label}: {val:+.3f}", (col_w * 2 + 10, 45 + i * 22), font, scale, (100, 180, 255), thick)
+    else:
+        col_w = width // 2
+        cv2.putText(panel, "STATE", (10, 20), font, 0.5, (200, 200, 200), 1)
+        for i, (label, val) in enumerate(zip(STATE_LABELS, state)):
+            cv2.putText(panel, f"{label}: {val:+.3f}", (10, 45 + i * 22), font, scale, (100, 220, 100), thick)
+
+        cv2.putText(panel, "ACTION", (col_w + 10, 20), font, 0.5, (200, 200, 200), 1)
+        for i, (label, val) in enumerate(zip(ACTION_LABELS, action)):
+            cv2.putText(panel, f"{label}: {val:+.3f}", (col_w + 10, 45 + i * 22), font, scale, (100, 180, 255), thick)
 
     return panel
 
@@ -57,6 +79,7 @@ def build_frame(
     episode: int,
     step: int,
     total_steps: int,
+    target_state: list[float] | None = None,
 ) -> np.ndarray:
     # Scale top camera (64×64) to DISPLAY_H × DISPLAY_H
     top_disp = cv2.resize(top_bgr, (DISPLAY_H, DISPLAY_H), interpolation=cv2.INTER_NEAREST)
@@ -82,7 +105,7 @@ def build_frame(
     cv2.putText(cameras, "top (64px)", (4, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 100), 1)
     cv2.putText(cameras, "base", (DISPLAY_H + 4, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 100), 1)
 
-    text_panel = make_text_panel(total_w, state, action)
+    text_panel = make_text_panel(total_w, state, action, target_state)
     return np.vstack([header, cameras, text_panel])
 
 
@@ -92,11 +115,12 @@ def load_episode(ds: lance.LanceDataset, episode_idx: int) -> list[dict]:
     order = sorted(range(n), key=lambda i: table["step_idx"][i])
     return [
         {
-            "pixels":      table["pixels"][i],
-            "pixels_base": table["pixels_base"][i],
-            "state":       list(table["state"][i]),
-            "action":      list(table["action"][i]),
-            "step_idx":    table["step_idx"][i],
+            "pixels":       table["pixels"][i],
+            "pixels_base":  table["pixels_base"][i],
+            "state":        list(table["state"][i]),
+            "action":       list(table["action"][i]),
+            "step_idx":     table["step_idx"][i],
+            **({"target_state": list(table["target_state"][i])} if "target_state" in table else {}),
         }
         for i in order
     ]
@@ -127,6 +151,7 @@ def play_episode(
             top, base,
             row["state"], row["action"],
             episode_idx, step_i, len(steps),
+            target_state=row.get("target_state"),
         )
 
         if save_dir is not None and writer is None:
@@ -134,8 +159,6 @@ def play_episode(
             path = str(save_dir / f"episode_{episode_idx:04d}.mp4")
             writer = cv2.VideoWriter(path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
             print(f"  Saving → {path}")
-
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # convert to RGB for display and saving
 
         if writer is not None:
             writer.write(frame)
