@@ -23,9 +23,12 @@ def run(cfg: DictConfig) -> None:
     )
 
     world.set_policy(RandomPolicy(seed=cfg.seed))
-    world.collect(cfg.output, episodes=cfg.episodes, seed=cfg.seed)
-    world.close()
 
+    for ep in range(cfg.episodes):
+        world.collect(cfg.output, episodes=1, seed=cfg.seed + ep)
+        logging.info(f'Episode {ep + 1}/{cfg.episodes} saved → {cfg.output}')
+
+    world.close()
     logging.success(f'Collected {cfg.episodes} episodes → {cfg.output}')
 
 
