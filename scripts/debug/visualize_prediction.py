@@ -24,10 +24,11 @@ EMBED_DIM    = 192
 IMAGE_SIZE   = 224
 N_CONTEXT    = 3     # history_size — must match LeWM training config
 N_PRED_STEPS = 20    # autoregressive steps to predict beyond context
-N_TRAJ       = 5     # number of trajectories to visualize
-START_SAMPLE = 0     # dataset index of the first trajectory
-FRAMESKIP    = 1
-FPS          = 4
+N_TRAJ          = 5     # number of trajectories to visualize
+EPISODE_INDICES = None  # None = auto-pick N_TRAJ distinct episodes in order
+                        # or set to a list e.g. [0, 3, 7] to pick specific episodes
+FRAMESKIP       = 1
+FPS             = 4
 
 BGR_DATASET  = True  # images stored as BGR; set False after fixing env.render()
 # ============================================================
@@ -193,7 +194,7 @@ def main():
     N_TOTAL = N_CONTEXT + N_PRED_STEPS
     dataset = swm.data.load_dataset(
         DATASET_PATH, num_steps=N_TOTAL, frameskip=FRAMESKIP,
-        transform=None, keys_to_load=['pixels', 'action'],
+        transform=None, keys_to_load=['pixels', 'action', 'episode_idx'],
     )
     imagenet = dt.dataset_stats.ImageNet
     dataset.transform = dt.transforms.Compose(
@@ -201,21 +202,41 @@ def main():
         dt.transforms.Resize(IMAGE_SIZE, source='pixels', target='pixels'),
     )
 
-    # Collect N_TRAJ batches starting from START_SAMPLE
-    loader = DataLoader(dataset, batch_size=1, shuffle=False)
-    samples = []
-    for i, b in enumerate(loader):
-        if i < START_SAMPLE:
+    # Scan for one clean window per episode (no cross-episode boundary)
+    want = set(EPISODE_INDICES) if EPISODE_INDICES is not None else None
+    loader  = DataLoader(dataset, batch_size=1, shuffle=False)
+    samples = {}   # episode_idx → batch
+    print("Scanning dataset for episode windows …")
+    for b in loader:
+        ep_ids = b['episode_idx'][0]          # (N_TOTAL,) int
+        if not (ep_ids == ep_ids[0]).all():   # spans a boundary — skip
             continue
-        samples.append(b)
-        if len(samples) == N_TRAJ:
+        ep = int(ep_ids[0])
+        if ep in samples:                     # already have one for this episode
+            continue
+        if want is not None and ep not in want:
+            continue
+        samples[ep] = b
+        if want is None and len(samples) == N_TRAJ:
             break
-    assert len(samples) == N_TRAJ, f"Only {len(samples)} samples available (need {N_TRAJ})"
+        if want is not None and len(samples) == len(want):
+            break
+
+    if want is not None:
+        missing = want - samples.keys()
+        assert not missing, f"Episodes not found or too short: {missing}"
+    else:
+        assert len(samples) == N_TRAJ, (
+            f"Only {len(samples)} distinct episodes found (need {N_TRAJ})"
+        )
+
+    episode_order = EPISODE_INDICES if EPISODE_INDICES is not None else sorted(samples)
+    samples_list  = [samples[ep] for ep in episode_order]
 
     # ---- per-trajectory loop --------------------------------------- #
-    for traj_idx, batch in enumerate(samples):
-        sample_idx = START_SAMPLE + traj_idx
-        print(f"\n[{traj_idx + 1}/{N_TRAJ}] sample {sample_idx}")
+    for traj_idx, batch in enumerate(samples_list):
+        ep = int(batch['episode_idx'][0, 0])
+        print(f"\n[{traj_idx + 1}/{len(samples_list)}] episode {ep}")
 
         pixels  = batch['pixels'].to(device)   # (1, N_TOTAL, 3, H, W)
         actions = batch['action'].to(device)   # (1, N_TOTAL, action_dim)
@@ -243,7 +264,7 @@ def main():
 
         # build and write video
         frames   = _build_frames(pixels[0], decoded_gt, decoded_pred)
-        out_path = str(out_dir / f"traj_{sample_idx:04d}.mp4")
+        out_path = str(out_dir / f"episode_{ep:04d}.mp4")
         _write_video(frames, out_path)
         print(f"  Saved → {out_path}  ({len(frames)} frames @ {FPS} fps)")
 
