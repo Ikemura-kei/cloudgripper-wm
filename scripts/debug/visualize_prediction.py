@@ -18,13 +18,14 @@ Usage:
 DATASET_PATH       = "/mimer/NOBACKUP/groups/softenable-codesign26/kei/cloudgripper-wm/data/cloudgripper.lance"
 LEWM_CHECKPOINT    = "/mimer/NOBACKUP/groups/softenable-codesign26/kei/.stable_worldmodel/checkpoints/lewm/weights_epoch_92.pt"
 DECODER_CHECKPOINT = "???"   # path to decoder_epoch_N.pt
-OUTPUT_PATH        = "prediction.mp4"
+OUTPUT_DIR         = "predictions"   # directory; one traj_N.mp4 per trajectory
 
 EMBED_DIM    = 192
 IMAGE_SIZE   = 224
 N_CONTEXT    = 3     # history_size — must match LeWM training config
 N_PRED_STEPS = 20    # autoregressive steps to predict beyond context
-SAMPLE_IDX   = 0     # which dataset window to visualize (0 = first)
+N_TRAJ       = 5     # number of trajectories to visualize
+START_SAMPLE = 0     # dataset index of the first trajectory
 FRAMESKIP    = 1
 FPS          = 4
 
@@ -141,11 +142,44 @@ def make_frame(
 #  Main                                                                #
 # ------------------------------------------------------------------ #
 
+def _build_frames(
+    pixels: torch.Tensor,       # (N_TOTAL, 3, H, W)
+    decoded_gt: torch.Tensor,   # (N_TOTAL, 3, H, W)
+    decoded_pred: torch.Tensor, # (N_CONTEXT+N_PRED_STEPS+1, 3, H, W)
+) -> list[np.ndarray]:
+    frames = []
+    N_TOTAL = pixels.shape[0]
+    for t in range(N_TOTAL):
+        gt_np = tensor_to_np(pixels[t], bgr=BGR_DATASET)
+        if t < N_CONTEXT:
+            pred_np    = tensor_to_np(decoded_gt[t])
+            label      = f"t={t} CONTEXT (recon)"
+            is_context = True
+        else:
+            pred_np    = tensor_to_np(decoded_pred[t])
+            label      = f"t={t} PREDICTION (step +{t - N_CONTEXT + 1})"
+            is_context = False
+        frames.append(make_frame(gt_np, pred_np, label, is_context))
+    return frames
+
+
+def _write_video(frames: list[np.ndarray], path: str) -> None:
+    H_f, W_f, _ = frames[0].shape
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    writer = cv2.VideoWriter(path, fourcc, FPS, (W_f, H_f))
+    for frame in frames:
+        writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+    writer.release()
+
+
 def main():
     assert DECODER_CHECKPOINT != "???", "Set DECODER_CHECKPOINT at the top of the script"
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
+
+    out_dir = Path(OUTPUT_DIR)
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     # ---- models ---------------------------------------------------- #
     print("Loading LeWM …")
@@ -167,77 +201,51 @@ def main():
         dt.transforms.Resize(IMAGE_SIZE, source='pixels', target='pixels'),
     )
 
+    # Collect N_TRAJ batches starting from START_SAMPLE
     loader = DataLoader(dataset, batch_size=1, shuffle=False)
-    batch  = None
+    samples = []
     for i, b in enumerate(loader):
-        if i == SAMPLE_IDX:
-            batch = b
+        if i < START_SAMPLE:
+            continue
+        samples.append(b)
+        if len(samples) == N_TRAJ:
             break
-    assert batch is not None, f"SAMPLE_IDX {SAMPLE_IDX} out of range"
+    assert len(samples) == N_TRAJ, f"Only {len(samples)} samples available (need {N_TRAJ})"
 
-    pixels  = batch['pixels'].to(device)   # (1, N_TOTAL, 3, H, W)
-    actions = batch['action'].to(device)   # (1, N_TOTAL, action_dim)
-    H_img, W_img = pixels.shape[-2], pixels.shape[-1]
-    print(f"Image shape: {H_img}×{W_img}")
+    # ---- per-trajectory loop --------------------------------------- #
+    for traj_idx, batch in enumerate(samples):
+        sample_idx = START_SAMPLE + traj_idx
+        print(f"\n[{traj_idx + 1}/{N_TRAJ}] sample {sample_idx}")
 
-    # ---- rollout ---------------------------------------------------- #
-    # rollout expects:
-    #   info['pixels']    : (B, S, T_ctx, C, H, W)
-    #   action_sequence   : (B, S, T_total, action_dim)
-    info = {
-        'pixels': pixels[:, :N_CONTEXT].unsqueeze(1),   # (1, 1, N_CONTEXT, 3, H, W)
-        'action': actions[:, :N_CONTEXT].unsqueeze(1),  # (1, 1, N_CONTEXT, action_dim)
-    }
-    action_seq = actions.unsqueeze(1)   # (1, 1, N_TOTAL, action_dim)
+        pixels  = batch['pixels'].to(device)   # (1, N_TOTAL, 3, H, W)
+        actions = batch['action'].to(device)   # (1, N_TOTAL, action_dim)
+        H_img, W_img = pixels.shape[-2], pixels.shape[-1]
 
-    print("Rolling out world model …")
-    with torch.no_grad():
-        info = world_model.rollout(info, action_seq, history_size=N_CONTEXT)
+        # rollout
+        info = {
+            'pixels': pixels[:, :N_CONTEXT].unsqueeze(1),
+            'action': actions[:, :N_CONTEXT].unsqueeze(1),
+        }
+        with torch.no_grad():
+            info = world_model.rollout(info, actions.unsqueeze(1), history_size=N_CONTEXT)
+        pred_emb = info['predicted_emb'][0, 0]   # (N_CONTEXT+N_PRED_STEPS+1, D)
 
-    # predicted_emb: (1, 1, N_CONTEXT + N_PRED_STEPS + 1, D)
-    pred_emb = info['predicted_emb'][0, 0]   # (N_CONTEXT + N_PRED_STEPS + 1, D)
+        # encode all GT frames for context reconstruction baseline
+        gt_batch = {'pixels': pixels, 'action': actions}
+        with torch.no_grad():
+            world_model.encode(gt_batch)
+        gt_emb = gt_batch['emb'][0]   # (N_TOTAL, D)
 
-    # Also encode all ground-truth frames for the "real reconstruction" baseline
-    gt_batch = {'pixels': pixels, 'action': actions}
-    with torch.no_grad():
-        world_model.encode(gt_batch)
-    gt_emb = gt_batch['emb'][0]   # (N_TOTAL, D)
+        # decode
+        with torch.no_grad():
+            decoded_gt   = decoder(gt_emb,   target_size=(H_img, W_img))
+            decoded_pred = decoder(pred_emb, target_size=(H_img, W_img))
 
-    # ---- decode ---------------------------------------------------- #
-    print("Decoding embeddings …")
-    with torch.no_grad():
-        decoded_gt   = decoder(gt_emb,   target_size=(H_img, W_img))  # (N_TOTAL, 3, H, W)
-        decoded_pred = decoder(pred_emb, target_size=(H_img, W_img))  # (N_CONTEXT+N_PRED_STEPS+1, 3, H, W)
-
-    # ---- build video ----------------------------------------------- #
-    print("Building frames …")
-    frames = []
-    for t in range(N_TOTAL):
-        gt_np = tensor_to_np(pixels[0, t], bgr=BGR_DATASET)
-
-        if t < N_CONTEXT:
-            # context: compare GT with its own reconstruction
-            pred_np    = tensor_to_np(decoded_gt[t], bgr=False)
-            label      = f"t={t} CONTEXT (recon)"
-            is_context = True
-        else:
-            # prediction: compare GT with autoregressive prediction
-            # pred_emb[N_CONTEXT] corresponds to the first predicted step
-            pred_idx   = t   # pred_emb starts at t=0 (context frames) then t=N_CONTEXT onwards are predictions
-            pred_np    = tensor_to_np(decoded_pred[pred_idx], bgr=False)
-            label      = f"t={t} PREDICTION (step +{t - N_CONTEXT + 1})"
-            is_context = False
-
-        frames.append(make_frame(gt_np, pred_np, label, is_context))
-
-    # ---- write MP4 ------------------------------------------------- #
-    H_f, W_f, _ = frames[0].shape
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    writer = cv2.VideoWriter(OUTPUT_PATH, fourcc, FPS, (W_f, H_f))
-    for frame in frames:
-        writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
-    writer.release()
-    print(f"Saved → {OUTPUT_PATH}  ({len(frames)} frames @ {FPS} fps)")
+        # build and write video
+        frames   = _build_frames(pixels[0], decoded_gt, decoded_pred)
+        out_path = str(out_dir / f"traj_{sample_idx:04d}.mp4")
+        _write_video(frames, out_path)
+        print(f"  Saved → {out_path}  ({len(frames)} frames @ {FPS} fps)")
 
 
 if __name__ == '__main__':
