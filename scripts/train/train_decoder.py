@@ -58,17 +58,19 @@ from torch.utils.data import DataLoader
 # ------------------------------------------------------------------ #
 
 class CNNDecoder(nn.Module):
-    """Upsamples a flat embedding back to a 3×224×224 image.
+    """Upsamples a flat embedding back to a 3×H×W image.
 
-    Spatial path: Linear → (128,7,7) → 5× ConvTranspose2d → (3,224,224)
+    Spatial path: Linear → (128,7,13) → 5× ConvTranspose2d → (3,224,416)
     Each ConvTranspose2d(k=4, s=2, p=1) doubles spatial dims:
-        7 → 14 → 28 → 56 → 112 → 224
+        7×13 → 14×26 → 28×52 → 56×104 → 112×208 → 224×416
+    A final bilinear interpolate snaps to the actual target (H, W) — e.g. 224×398
+    for CloudGripper 16:9 images.  Starting width 13 = ceil(398/32).
     Output is in ImageNet-normalised space (same as input) — no final activation.
     """
 
     def __init__(self, embed_dim: int = EMBED_DIM):
         super().__init__()
-        self.proj = nn.Linear(embed_dim, 128 * 7 * 7)
+        self.proj = nn.Linear(embed_dim, 128 * 7 * 13)
         self.net = nn.Sequential(
             nn.ConvTranspose2d(128, 128, 4, stride=2, padding=1),
             nn.BatchNorm2d(128), nn.ReLU(inplace=True),
@@ -81,8 +83,11 @@ class CNNDecoder(nn.Module):
             nn.ConvTranspose2d(16,  3,   4, stride=2, padding=1),
         )
 
-    def forward(self, z: torch.Tensor) -> torch.Tensor:  # (N, D) → (N, 3, 224, 224)
-        return self.net(self.proj(z).view(z.size(0), 128, 7, 7))
+    def forward(self, z: torch.Tensor, target_size: tuple[int, int] | None = None) -> torch.Tensor:
+        out = self.net(self.proj(z).view(z.size(0), 128, 7, 13))
+        if target_size is not None:
+            out = F.interpolate(out, size=target_size, mode='bilinear', align_corners=False)
+        return out
 
 
 # ------------------------------------------------------------------ #
@@ -109,7 +114,7 @@ class DecoderModule(pl.LightningModule):
         pixels = batch['pixels']                                    # (B, T, C, H, W)
         flat   = rearrange(pixels, 'b t c h w -> (b t) c h w')
         emb    = self._encode(batch)                                # (B*T, D)
-        recon  = self.decoder(emb)                                  # (B*T, 3, H, W)
+        recon  = self.decoder(emb, target_size=(flat.shape[-2], flat.shape[-1]))  # (B*T, 3, H, W)
         loss   = F.mse_loss(recon, flat)
         self.log(f'{stage}/mse_loss', loss, on_epoch=True, on_step=False, prog_bar=True)
         return loss, recon, flat
