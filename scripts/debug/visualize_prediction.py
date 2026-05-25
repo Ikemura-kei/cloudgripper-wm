@@ -266,6 +266,12 @@ def main():
             world_model.encode(gt_batch)
         gt_emb = gt_batch['emb'][0]   # (N_TOTAL, D)
 
+        # per-step embedding MSE (context frames = 0 by definition)
+        print(f"  {'step':>4}  {'emb_mse':>10}")
+        for t in range(N_CONTEXT, N_TOTAL):
+            mse = F.mse_loss(pred_emb[t], gt_emb[t]).item()
+            print(f"  t={t:<3}  {mse:>10.6f}")
+
         # decode
         with torch.no_grad():
             decoded_gt   = decoder(gt_emb,   target_size=(H_img, W_img))
