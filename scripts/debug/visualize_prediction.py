@@ -194,7 +194,7 @@ def main():
     N_TOTAL = N_CONTEXT + N_PRED_STEPS
     dataset = swm.data.load_dataset(
         DATASET_PATH, num_steps=N_TOTAL, frameskip=FRAMESKIP,
-        transform=None, keys_to_load=['pixels', 'action', 'episode_idx'],
+        transform=None, keys_to_load=['pixels', 'action', 'step_idx'],
     )
     imagenet = dt.dataset_stats.ImageNet
     dataset.transform = dt.transforms.Compose(
@@ -202,21 +202,32 @@ def main():
         dt.transforms.Resize(IMAGE_SIZE, source='pixels', target='pixels'),
     )
 
-    # Scan for one clean window per episode (no cross-episode boundary)
-    want = set(EPISODE_INDICES) if EPISODE_INDICES is not None else None
+    # Scan for the first clean window of each episode.
+    # step_idx resets to 0 at each new episode; a window is clean when its
+    # step_idx values are strictly increasing (no reset inside the window).
+    want    = set(EPISODE_INDICES) if EPISODE_INDICES is not None else None
     loader  = DataLoader(dataset, batch_size=1, shuffle=False)
-    samples = {}   # episode_idx → batch
+    samples = {}   # local episode counter → batch
+    ep_ctr  = -1
+    prev_last_step = -1
     print("Scanning dataset for episode windows …")
     for b in loader:
-        ep_ids = b['episode_idx'][0]          # (N_TOTAL,) int
-        if not (ep_ids == ep_ids[0]).all():   # spans a boundary — skip
+        steps = b['step_idx'][0]              # (N_TOTAL,) int
+        # detect new episode: first step reset or very first window
+        if int(steps[0]) <= prev_last_step or ep_ctr == -1:
+            ep_ctr += 1
+        prev_last_step = int(steps[-1])
+
+        # skip windows that cross an episode boundary (non-monotonic step_idx)
+        if not (steps[1:] > steps[:-1]).all():
             continue
-        ep = int(ep_ids[0])
-        if ep in samples:                     # already have one for this episode
+
+        if ep_ctr in samples:                 # already captured this episode
             continue
-        if want is not None and ep not in want:
+        if want is not None and ep_ctr not in want:
             continue
-        samples[ep] = b
+
+        samples[ep_ctr] = b
         if want is None and len(samples) == N_TRAJ:
             break
         if want is not None and len(samples) == len(want):
@@ -234,8 +245,7 @@ def main():
     samples_list  = [samples[ep] for ep in episode_order]
 
     # ---- per-trajectory loop --------------------------------------- #
-    for traj_idx, batch in enumerate(samples_list):
-        ep = int(batch['episode_idx'][0, 0])
+    for traj_idx, (ep, batch) in enumerate(zip(episode_order, samples_list)):
         print(f"\n[{traj_idx + 1}/{len(samples_list)}] episode {ep}")
 
         pixels  = batch['pixels'].to(device)   # (1, N_TOTAL, 3, H, W)
