@@ -1,4 +1,7 @@
+import datetime
 import os
+import random
+import string
 from pathlib import Path
 
 import hydra
@@ -104,6 +107,11 @@ def lejepa_forward(self, batch, stage, cfg):
 
 @hydra.main(version_base=None, config_path='./config', config_name='lewm')
 def run(cfg):
+    ts = datetime.datetime.now().strftime('%y-%m-%d-%H-%M-%S')
+    suffix = ''.join(random.choices(string.ascii_lowercase, k=3))
+    with open_dict(cfg):
+        cfg.output_model_name = f"{cfg.output_model_name}-{ts}-{suffix}"
+
     #########################
     ##       dataset       ##
     #########################
