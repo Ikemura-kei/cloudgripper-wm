@@ -1,7 +1,4 @@
-import functools
-import multiprocessing.reduction
 import os
-import types
 from pathlib import Path
 
 import hydra
@@ -20,24 +17,6 @@ from lightning.pytorch.callbacks import Callback
 from stable_worldmodel.wm.utils import save_pretrained
 
 
-def _rebuild_partial_method(obj, func, args, kwargs):
-    return functools.partial(func, *args, **kwargs).__get__(obj, type(obj))
-
-
-def _reduce_method_patched(m):
-    if isinstance(getattr(m, '__func__', None), functools.partial):
-        p = m.__func__
-        return _rebuild_partial_method, (m.__self__, p.func, p.args, p.keywords or {})
-    if m.__self__ is None:
-        return getattr, (m.__class__, m.__func__.__name__)
-    return getattr, (m.__self__, m.__func__.__name__)
-
-
-multiprocessing.reduction.ForkingPickler.register(types.MethodType, _reduce_method_patched)
-
-
-# stable_pretraining 0.1.4 bug: on_train_start calls len(self.optimizers()) but Lightning
-# returns a single optimizer (not a list) when only one is configured. Patch to normalize.
 _orig_on_train_start = spt.Module.on_train_start
 
 def _on_train_start_compat(self):
