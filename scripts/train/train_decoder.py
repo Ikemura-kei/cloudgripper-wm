@@ -28,6 +28,8 @@ TRAIN_SPLIT     = 0.9
 SEED            = 42
 NUM_WORKERS     = 0         # keep 0 — Lance reader holds thread locks
 
+DECODER_SAVE_DIR = "/mimer/NOBACKUP/groups/softenable-codesign26/kei/.stable_worldmodel/checkpoints/decoder"
+
 WANDB_ENABLED   = False
 WANDB_PROJECT   = "cloudgripper-wm"
 WANDB_RUN_NAME  = "decoder"
@@ -148,6 +150,24 @@ class DecoderModule(pl.LightningModule):
 
 
 # ------------------------------------------------------------------ #
+#  Checkpoint callback                                                 #
+# ------------------------------------------------------------------ #
+
+class SaveDecoderCallback(pl.Callback):
+    """Saves only the decoder state dict after each epoch."""
+
+    def __init__(self, save_dir: str):
+        super().__init__()
+        self.save_dir = Path(save_dir)
+        self.save_dir.mkdir(parents=True, exist_ok=True)
+
+    def on_train_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
+        epoch = trainer.current_epoch + 1
+        path  = self.save_dir / f'decoder_epoch_{epoch}.pt'
+        torch.save(pl_module.decoder.state_dict(), path)
+
+
+# ------------------------------------------------------------------ #
 #  Model loading                                                       #
 # ------------------------------------------------------------------ #
 
@@ -215,6 +235,10 @@ def main():
         suffix = ''.join(random.choices(string.ascii_lowercase, k=3))
         logger = WandbLogger(project=WANDB_PROJECT, name=f"{WANDB_RUN_NAME}-{ts}-{suffix}")
 
+    ts     = datetime.datetime.now().strftime('%y-%m-%d-%H-%M-%S')
+    suffix = ''.join(random.choices(string.ascii_lowercase, k=3))
+    save_dir = Path(DECODER_SAVE_DIR) / f"decoder-{ts}-{suffix}"
+
     trainer = pl.Trainer(
         max_epochs=MAX_EPOCHS,
         accelerator='gpu', devices='auto',
@@ -222,6 +246,8 @@ def main():
         gradient_clip_val=1.0,
         logger=logger,
         num_sanity_val_steps=1,
+        callbacks=[SaveDecoderCallback(save_dir)],
+        enable_checkpointing=False,
     )
     trainer.fit(module, train_loader, val_loader)
 
