@@ -1,6 +1,6 @@
 import os
 import time
-
+import cv2
 import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
@@ -63,6 +63,7 @@ class CloudGripperEnv(gym.Env):
         })
 
         self._target_pos: np.ndarray = DEFAULT_HOME_POS.copy()
+        self._last_sent_pos: np.ndarray = np.full(5, np.inf, dtype=np.float32)
         self._last_top_img: np.ndarray | None = None
 
     # ------------------------------------------------------------------
@@ -79,9 +80,8 @@ class CloudGripperEnv(gym.Env):
         self._target_pos = (
             self.task.home_pos().copy() if self.task is not None else DEFAULT_HOME_POS.copy()
         )
+        self._last_sent_pos[:] = np.inf   # force all axes to be sent on reset
         self._send_absolute()
-        # gripper open on reset regardless of rotation/grip target
-        self.robot.gripper_open()
 
         time.sleep(self.dwell_time)
 
@@ -89,8 +89,8 @@ class CloudGripperEnv(gym.Env):
         base_img, _ = self.robot.getImageBase()
         self._last_top_img = top_img
 
-        obs = {"state": self._target_pos.copy()}
-        info = {"pixels_base": base_img}
+        obs = {"state": self._get_current_state()}
+        info = {"pixels_base": base_img, "target_state": self._target_pos.copy()}
         return obs, info
 
     def step(self, action: np.ndarray) -> tuple[dict, float, bool, bool, dict]:
@@ -104,8 +104,8 @@ class CloudGripperEnv(gym.Env):
         base_img, _ = self.robot.getImageBase()
         self._last_top_img = top_img
 
-        obs = {"state": self._target_pos.copy()}
-        info: dict = {"pixels_base": base_img}
+        obs = {"state": self._get_current_state()}
+        info: dict = {"pixels_base": base_img, "target_state": self._target_pos.copy()}
 
         if self.task is not None:
             reward = self.task.compute_reward(obs, action, info)
@@ -133,7 +133,34 @@ class CloudGripperEnv(gym.Env):
 
     def _send_absolute(self) -> None:
         x, y, z, rot_norm, grip = self._target_pos
-        self.robot.move_xy(float(x), float(y))
-        self.robot.move_z(float(z))
-        self.robot.rotate(int(float(rot_norm) * 180))
-        self.robot.move_gripper(float(grip))
+        d = np.abs(self._target_pos - self._last_sent_pos)
+
+        if d[0] >= 0.01 or d[1] >= 0.01:
+            self.robot.move_xy(float(x), float(y))
+            self._last_sent_pos[0] = x
+            self._last_sent_pos[1] = y
+            time.sleep(0.05)
+        if d[2] >= 0.01:
+            self.robot.move_z(float(z))
+            self._last_sent_pos[2] = z
+            time.sleep(0.05)
+        if d[3] >= 0.01:
+            self.robot.rotate(int(float(rot_norm) * 180))
+            self._last_sent_pos[3] = rot_norm
+            time.sleep(0.05)
+        if d[4] >= 0.01:
+            self.robot.move_gripper(float(grip))
+            self._last_sent_pos[4] = grip
+            time.sleep(0.05)
+
+    def _get_current_state(self) -> np.ndarray:
+        """Read actual robot state and return as [x, y, z, rot_norm, gripper] in [0,1]."""
+        state_dict, _ = self.robot.get_state()
+        assert state_dict is not None, f"get_state() failed for {self._robot_name}"
+        return np.array([
+            state_dict['x_norm'],
+            state_dict['y_norm'],
+            state_dict['z_norm'],
+            state_dict['rotation'] / 180.0,
+            state_dict['claw_norm'],
+        ], dtype=np.float32)
