@@ -1,7 +1,7 @@
 defaults:
   - _self_
   - launcher: local
-  - data: cloudgripper
+  - data: cloudgripper_w_state
 
 output_model_name: lewm
 subdir: ${hydra:job.id}
