@@ -34,8 +34,10 @@ WANDB_RUN_NAME  = "decoder"
 # ============================================================
 
 import datetime
+import json
 import random
 import string
+from pathlib import Path
 
 import lightning as pl
 import stable_pretraining as spt
@@ -44,9 +46,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
+from hydra.utils import instantiate
 from lightning.pytorch.loggers import WandbLogger
+from omegaconf import OmegaConf
 from stable_pretraining import data as dt
-from stable_worldmodel.wm.utils import load_pretrained
 from torch.utils.data import DataLoader
 
 
@@ -140,6 +143,28 @@ class DecoderModule(pl.LightningModule):
 
 
 # ------------------------------------------------------------------ #
+#  Model loading                                                       #
+# ------------------------------------------------------------------ #
+
+def _load_lewm(checkpoint_path: str) -> nn.Module:
+    """Load a LeWM model from a save_pretrained checkpoint.
+
+    save_pretrained writes config.json with the *full* training config
+    (no top-level _target_), so we pull just the 'model' sub-config and
+    instantiate from that.
+    """
+    ckpt = Path(checkpoint_path)
+    config_path = ckpt.parent / 'config.json'
+    with open(config_path) as f:
+        raw = json.load(f)
+    model_cfg = raw.get('model', raw)   # handle full-training-cfg or model-only cfg
+    world_model = instantiate(OmegaConf.create(model_cfg))
+    state_dict = torch.load(str(ckpt), map_location='cpu')
+    world_model.load_state_dict(state_dict)
+    return world_model
+
+
+# ------------------------------------------------------------------ #
 #  Main                                                                #
 # ------------------------------------------------------------------ #
 
@@ -173,7 +198,7 @@ def main():
     )
 
     # Load full LeWM model and freeze it
-    world_model = load_pretrained(CHECKPOINT_PATH)
+    world_model = _load_lewm(CHECKPOINT_PATH)
     world_model.eval().requires_grad_(False)
 
     decoder = CNNDecoder(embed_dim=EMBED_DIM)
