@@ -134,8 +134,8 @@ class DecoderModule(pl.LightningModule):
 
     def _log_images(self, orig: torch.Tensor, recon: torch.Tensor, n: int = 4):
         import wandb
-        mean = _MEAN.to(orig)
-        std  = _STD.to(orig)
+        mean = _MEAN.squeeze(0).to(orig)
+        std  = _STD.squeeze(0).to(orig)
         denorm = lambda t: (t * std + mean).clamp(0, 1)
         imgs = []
         for i in range(min(n, orig.size(0))):
