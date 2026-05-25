@@ -194,7 +194,7 @@ def main():
     N_TOTAL = N_CONTEXT + N_PRED_STEPS
     dataset = swm.data.load_dataset(
         DATASET_PATH, num_steps=N_TOTAL, frameskip=FRAMESKIP,
-        transform=None, keys_to_load=['pixels', 'action', 'step_idx'],
+        transform=None, keys_to_load=['pixels', 'action'],
     )
     imagenet = dt.dataset_stats.ImageNet
     dataset.transform = dt.transforms.Compose(
@@ -202,27 +202,26 @@ def main():
         dt.transforms.Resize(IMAGE_SIZE, source='pixels', target='pixels'),
     )
 
-    # Scan for the first clean window of each episode.
-    # step_idx resets to 0 at each new episode; a window is clean when its
-    # step_idx values are strictly increasing (no reset inside the window).
-    want    = set(EPISODE_INDICES) if EPISODE_INDICES is not None else None
-    loader  = DataLoader(dataset, batch_size=1, shuffle=False)
-    samples = {}   # local episode counter → batch
-    ep_ctr  = -1
-    prev_last_step = -1
+    # Detect episode boundaries from NaN actions (stable-worldmodel inserts NaN
+    # at transitions between episodes). A window with any NaN action crosses a
+    # boundary and is skipped. After every such window the next clean window
+    # is the start of a new episode.
+    want           = set(EPISODE_INDICES) if EPISODE_INDICES is not None else None
+    loader         = DataLoader(dataset, batch_size=1, shuffle=False)
+    samples        = {}   # local episode counter → batch
+    ep_ctr         = -1
+    after_boundary = True   # first clean window counts as a new episode
     print("Scanning dataset for episode windows …")
     for b in loader:
-        steps = b['step_idx'][0]              # (N_TOTAL,) int
-        # detect new episode: first step reset or very first window
-        if int(steps[0]) <= prev_last_step or ep_ctr == -1:
-            ep_ctr += 1
-        prev_last_step = int(steps[-1])
-
-        # skip windows that cross an episode boundary (non-monotonic step_idx)
-        if not (steps[1:] > steps[:-1]).all():
+        if torch.isnan(b['action']).any():    # crosses an episode boundary
+            after_boundary = True
             continue
 
-        if ep_ctr in samples:                 # already captured this episode
+        if after_boundary:                    # first clean window of a new episode
+            ep_ctr        += 1
+            after_boundary = False
+
+        if ep_ctr in samples:                 # already have one for this episode
             continue
         if want is not None and ep_ctr not in want:
             continue
