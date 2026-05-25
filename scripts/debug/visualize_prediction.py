@@ -34,13 +34,13 @@ BGR_DATASET  = True  # images stored as BGR; set False after fixing env.render()
 import json
 from pathlib import Path
 
+import cv2
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import stable_worldmodel as swm
 import stable_pretraining as spt
-import torchvision
 from einops import rearrange
 from hydra.utils import instantiate
 from omegaconf import OmegaConf
@@ -231,8 +231,12 @@ def main():
         frames.append(make_frame(gt_np, pred_np, label, is_context))
 
     # ---- write MP4 ------------------------------------------------- #
-    video = torch.from_numpy(np.stack(frames))   # (T, H+bar, W*2+sep, 3)
-    torchvision.io.write_video(OUTPUT_PATH, video, fps=FPS)
+    H_f, W_f, _ = frames[0].shape
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    writer = cv2.VideoWriter(OUTPUT_PATH, fourcc, FPS, (W_f, H_f))
+    for frame in frames:
+        writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+    writer.release()
     print(f"Saved → {OUTPUT_PATH}  ({len(frames)} frames @ {FPS} fps)")
 
 
