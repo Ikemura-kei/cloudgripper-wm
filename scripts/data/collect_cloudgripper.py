@@ -4,9 +4,16 @@ Usage:
     uv run python scripts/data/collect.py
     uv run python scripts/data/collect.py robots=[robot1,robot2] episodes=100
     uv run python scripts/data/collect.py use_mock=true output=data/mock.lance
+
+Appending to an existing dataset is automatic — just point to the same output
+path. The seed is offset by the number of already-collected episodes so new
+episodes are never duplicates of existing ones.
 """
 
+from pathlib import Path
+
 import hydra
+import lance
 from loguru import logger as logging
 from omegaconf import DictConfig
 from stable_worldmodel.policy import RandomPolicy
@@ -14,19 +21,35 @@ from stable_worldmodel.policy import RandomPolicy
 from cloudgripper_wm.world import CloudGripperWorld
 
 
+def _count_existing_episodes(path: str) -> int:
+    """Return number of episodes already in the Lance dataset, or 0 if absent."""
+    if not Path(path).exists():
+        return 0
+    try:
+        col = lance.dataset(path).to_table(columns=["episode_idx"]).column("episode_idx").to_pylist()
+        return max(col) + 1 if col else 0
+    except Exception:
+        return 0
+
+
 @hydra.main(version_base=None, config_path='./config', config_name='cloudgripper')
 def run(cfg: DictConfig) -> None:
+    n_existing = _count_existing_episodes(cfg.output)
+    if n_existing:
+        logging.info(f'Appending to existing dataset ({n_existing} episodes already collected)')
+    seed_start = cfg.seed + n_existing
+
     world = CloudGripperWorld(
         robot_names=list(cfg.robots),
         use_mock=cfg.use_mock,
         **cfg.world,
     )
 
-    world.set_policy(RandomPolicy(seed=cfg.seed))
+    world.set_policy(RandomPolicy(seed=seed_start))
 
     for ep in range(cfg.episodes):
-        world.collect(cfg.output, episodes=1, seed=cfg.seed + ep)
-        logging.info(f'Episode {ep + 1}/{cfg.episodes} saved → {cfg.output}')
+        world.collect(cfg.output, episodes=1, seed=seed_start + ep)
+        logging.info(f'Episode {n_existing + ep + 1} saved (run ep {ep + 1}/{cfg.episodes}) → {cfg.output}')
 
     world.close()
     logging.success(f'Collected {cfg.episodes} episodes → {cfg.output}')
