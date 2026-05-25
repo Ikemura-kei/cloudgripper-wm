@@ -47,8 +47,20 @@ def run(cfg: DictConfig) -> None:
 
     world.set_policy(RandomPolicy(seed=seed_start))
 
+    max_retries = 1000
     for ep in range(cfg.episodes):
-        world.collect(cfg.output, episodes=1, seed=seed_start + ep)
+        seed = seed_start + ep
+        for attempt in range(1, max_retries + 1):
+            try:
+                world.collect(cfg.output, episodes=1, seed=seed)
+                break
+            except Exception as exc:
+                logging.warning(f'Episode {n_existing + ep + 1} attempt {attempt}/{max_retries} failed: {exc}')
+                if attempt == max_retries:
+                    raise RuntimeError(
+                        f'Episode {n_existing + ep + 1} failed after {max_retries} attempts'
+                    ) from exc
+                seed += cfg.episodes  # offset so retries don't collide with other episodes' seeds
         logging.info(f'Episode {n_existing + ep + 1} saved (run ep {ep + 1}/{cfg.episodes}) → {cfg.output}')
 
     world.close()
