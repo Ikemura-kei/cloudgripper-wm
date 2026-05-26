@@ -106,7 +106,16 @@ def _sample_episodes(cfg, n_total_steps, frameskip):
         print(f'  Warning: only {n_avail} episodes long enough for {n_total_steps} steps '
               f'(requested {n_want})')
     selected = ep_start_indices[:n_want]
-    return [dataset[i] for i in selected]
+    batches = []
+    for i in selected:
+        item = dataset[i]
+        # dataset[i] has no batch dim; add it so downstream code sees (1, T, ...)
+        batches.append({
+            k: (v.unsqueeze(0) if isinstance(v, torch.Tensor)
+                else torch.as_tensor(v).unsqueeze(0))
+            for k, v in item.items()
+        })
+    return batches
 
 
 # ------------------------------------------------------------------ #
