@@ -19,7 +19,10 @@ Usage:
         'eval.keys_to_load=[pixels,action]'
 """
 
+import datetime
 import json
+import random
+import string
 from pathlib import Path
 
 import cv2
@@ -34,7 +37,7 @@ import torch.nn.functional as F
 from einops import rearrange
 from hydra.utils import instantiate
 from lightning.pytorch.loggers import WandbLogger
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig, OmegaConf, open_dict
 from PIL import Image, ImageDraw
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -272,6 +275,16 @@ def _write_video(frames: list[np.ndarray], path: Path, fps: int) -> None:
 def run(cfg: DictConfig) -> None:
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f'Device: {device}')
+
+    ts     = datetime.datetime.now().strftime('%y-%m-%d-%H-%M-%S')
+    suffix = ''.join(random.choices(string.ascii_lowercase, k=3))
+    with open_dict(cfg):
+        cfg.output_name = f'{cfg.output_name}-{ts}-{suffix}'
+        if cfg.decoder.save_path is None:
+            save_dir = swm.data.utils.get_cache_dir(sub_folder='checkpoints') / cfg.output_name
+            cfg.decoder.save_path = str(save_dir / 'decoder.pt')
+    print(f'Run name:  {cfg.output_name}')
+    print(f'Save path: {cfg.decoder.save_path}')
 
     # ---- LeWM -------------------------------------------------------- #
     print(f'Loading LeWM from {cfg.checkpoint} …')

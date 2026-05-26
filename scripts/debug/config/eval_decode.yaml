@@ -7,6 +7,8 @@ checkpoint: ???
 # Path to dataset (.lance / .h5 / folder)
 dataset: ???
 
+output_name: decoder    # used as the WandB run name; override on CLI as needed
+
 decoder:
   epochs: 20
   lr: 1.0e-3
@@ -15,14 +17,14 @@ decoder:
   num_steps: 4               # window size for decoder training dataset (n_context + 1)
   seed: 42
   train_split: 0.9
-  save_path: decoder.pt      # where to save the trained decoder
+  save_path: null            # default: STABLEWM_HOME/checkpoints/{output_name}/decoder.pt
   load_path: null            # set to skip training and load an existing decoder
 
 wandb:
   enabled: false
   config:
     project: cloudgripper-wm
-    name: eval_decode
+    name: ${output_name}
 
 eval:
   n_pred_steps: 20           # autoregressive steps beyond context
