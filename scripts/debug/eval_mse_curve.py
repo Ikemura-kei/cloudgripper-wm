@@ -1,21 +1,15 @@
-"""Evaluate autoregressive prediction quality of a stable-worldmodel checkpoint.
+"""Evaluate autoregressive prediction quality of a LeWM checkpoint.
 
 Samples N_EPISODES windows from a dataset, rolls out the world model
 autoregressively with real actions, and plots per-step embedding MSE
 (mean ± 1 std) as a function of prediction horizon.
 
-Compatible with any model that exposes rollout() + encode():
-  - LeWM  (stable_worldmodel.wm.lewm)
-  - PLDM  (stable_worldmodel.wm.pldm)
-  - PreJEPA (set model.is_prejepa: true — one-step prediction only)
-
 Usage:
     uv run python scripts/debug/eval_mse_curve.py \\
-        checkpoint=/path/to/weights_epoch_92.pt \\
-        dataset=/path/to/cloudgripper.lance
+        checkpoint=/path/to/weights.pt \\
+        dataset=/path/to/dataset.h5
 """
 
-import inspect
 from pathlib import Path
 
 import hydra
@@ -34,10 +28,10 @@ from stable_pretraining import data as dt
 #  Rollout helpers                                                     #
 # ------------------------------------------------------------------ #
 
-def _rollout_lewm(model, pixels, actions, n_context, device, extra=None):
-    """Autoregressive rollout for LeWM / PLDM.
+def _rollout(model, pixels, actions, n_context, device, extra=None):
+    """Autoregressive rollout for LeWM.
 
-    Returns pred_emb (T, D) and gt_emb (T, D) where T = N_CONTEXT + N_PRED + 1.
+    Returns pred_emb (T, D) and gt_emb (T, D).
     extra: dict of additional conditioning tensors (e.g. proprio), shape (1, T, D).
     """
     info = {
@@ -48,10 +42,8 @@ def _rollout_lewm(model, pixels, actions, n_context, device, extra=None):
         for k, v in extra.items():
             info[k] = v[:, :n_context].unsqueeze(1).to(device)
 
-    sig = inspect.signature(model.rollout)
-    kwargs = {'history_size': n_context} if 'history_size' in sig.parameters else {}
     with torch.no_grad():
-        info = model.rollout(info, actions.unsqueeze(1).to(device), **kwargs)
+        info = model.rollout(info, actions.unsqueeze(1).to(device), history_size=n_context)
     pred_emb = info['predicted_emb'][0, 0]  # (n_context + n_pred + 1, D)
 
     gt_batch = {'pixels': pixels.to(device), 'action': actions.to(device)}
@@ -63,21 +55,6 @@ def _rollout_lewm(model, pixels, actions, n_context, device, extra=None):
     gt_emb = gt_batch['emb'][0]  # (T_total, D)
 
     return pred_emb, gt_emb
-
-
-def _rollout_prejepa(model, pixels, actions, n_context, device):
-    """One-step prediction for PreJEPA (not autoregressive)."""
-    batch = {'pixels': pixels.to(device), 'action': actions.to(device)}
-    with torch.no_grad():
-        out = model.encode(batch)
-    emb     = out['emb']      # (1, T, D)
-    act_emb = out['act_emb']  # (1, T, A)
-    with torch.no_grad():
-        pred_emb = model.predict(emb[:, :n_context], act_emb[:, :n_context])
-    gt_emb   = emb[0, 1:]       # (T-1, D)
-    pred_emb = pred_emb[0]      # (n_pred, D)
-    L = min(pred_emb.shape[0], gt_emb.shape[0])
-    return pred_emb[:L], gt_emb[:L]
 
 
 # ------------------------------------------------------------------ #
@@ -203,10 +180,7 @@ def run(cfg: DictConfig):
         actions = batch['action']   # (1, n_total, action_dim)
         extra   = {k: v for k, v in batch.items() if k not in _CORE_KEYS}
 
-        if cfg.model.is_prejepa:
-            pred_emb, gt_emb = _rollout_prejepa(model, pixels, actions, n_context, device)
-        else:
-            pred_emb, gt_emb = _rollout_lewm(model, pixels, actions, n_context, device, extra)
+        pred_emb, gt_emb = _rollout(model, pixels, actions, n_context, device, extra)
 
         step_mse = []
         for t in range(n_context, min(n_context + n_pred_steps, gt_emb.shape[0])):

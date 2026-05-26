@@ -7,11 +7,6 @@ checkpoint: ???
 # Path to dataset (.lance / .h5 / folder)
 dataset: ???
 
-model:
-  # n_context is read automatically from model.predictor.num_frames (LeWM)
-  # or model.history_size — no need to set it manually
-  is_prejepa: false  # set true for PreJEPA (different rollout signature)
-
 eval:
   n_pred_steps: 20   # autoregressive steps beyond context
   n_episodes: 50     # episode windows to average over
