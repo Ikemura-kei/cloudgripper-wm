@@ -95,25 +95,18 @@ def _sample_episodes(cfg, n_total_steps, frameskip):
         dt.transforms.Resize(cfg.eval.image_size, source='pixels', target='pixels'),
     )
 
-    loader = DataLoader(dataset, batch_size=1, shuffle=False)
-    samples = {}
-    ep_ctr = -1
-    after_boundary = True
-
-    for b in loader:
-        if torch.isnan(b['action']).any():
-            after_boundary = True
-            continue
-        if after_boundary:
-            ep_ctr += 1
-            after_boundary = False
-        if ep_ctr in samples:
-            continue
-        samples[ep_ctr] = {k: v for k, v in b.items()}
-        if len(samples) == cfg.eval.n_episodes:
-            break
-
-    return list(samples.values())
+    # clip_indices is [(ep_idx, start), ...]; start==0 means beginning of episode.
+    # All windows are guaranteed within a single episode by the dataset itself.
+    ep_start_indices = [
+        i for i, (_, start) in enumerate(dataset.clip_indices) if start == 0
+    ]
+    n_avail = len(ep_start_indices)
+    n_want  = cfg.eval.n_episodes
+    if n_avail < n_want:
+        print(f'  Warning: only {n_avail} episodes long enough for {n_total_steps} steps '
+              f'(requested {n_want})')
+    selected = ep_start_indices[:n_want]
+    return [dataset[i] for i in selected]
 
 
 # ------------------------------------------------------------------ #
