@@ -7,7 +7,8 @@ autoregressively with real actions, and plots per-step embedding MSE
 Usage:
     uv run python scripts/debug/eval_mse_curve.py \\
         checkpoint=/path/to/weights.pt \\
-        dataset=/path/to/dataset.h5
+        dataset=/path/to/dataset.h5 \\
+        'eval.keys_to_load=[pixels,action]'
 """
 
 from pathlib import Path
@@ -18,6 +19,7 @@ import torch
 import torch.nn.functional as F
 from omegaconf import DictConfig
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 import stable_worldmodel as swm
 from stable_worldmodel.data import column_normalizer
@@ -85,10 +87,13 @@ def _sample_episodes(cfg, n_total_steps, frameskip):
     ]
     n_avail = len(ep_start_indices)
     n_want  = cfg.eval.n_episodes
-    if n_avail < n_want:
-        print(f'  Warning: only {n_avail} episodes long enough for {n_total_steps} steps '
-              f'(requested {n_want})')
-    selected = ep_start_indices[:n_want]
+    if n_want <= 0:
+        selected = ep_start_indices          # use all available
+    else:
+        if n_avail < n_want:
+            print(f'  Warning: only {n_avail} episodes long enough for {n_total_steps} steps '
+                  f'(requested {n_want})')
+        selected = ep_start_indices[:n_want]
     batches = []
     for i in selected:
         item = dataset[i]
@@ -181,7 +186,7 @@ def run(cfg: DictConfig):
     _CORE_KEYS = {'pixels', 'action'}
 
     all_mse = []
-    for i, batch in enumerate(episodes):
+    for i, batch in enumerate(tqdm(episodes, desc='Rolling out')):
         pixels  = batch['pixels']   # (1, n_total, C, H, W)
         actions = batch['action']   # (1, n_total, action_dim)
         extra   = {k: v for k, v in batch.items() if k not in _CORE_KEYS}
