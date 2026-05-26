@@ -34,15 +34,20 @@ from stable_pretraining import data as dt
 #  Rollout helpers                                                     #
 # ------------------------------------------------------------------ #
 
-def _rollout_lewm(model, pixels, actions, n_context, device):
+def _rollout_lewm(model, pixels, actions, n_context, device, extra=None):
     """Autoregressive rollout for LeWM / PLDM.
 
     Returns pred_emb (T, D) and gt_emb (T, D) where T = N_CONTEXT + N_PRED + 1.
+    extra: dict of additional conditioning tensors (e.g. proprio), shape (1, T, D).
     """
     info = {
         'pixels': pixels[:, :n_context].unsqueeze(1).to(device),
         'action': actions[:, :n_context].unsqueeze(1).to(device),
     }
+    if extra:
+        for k, v in extra.items():
+            info[k] = v[:, :n_context].unsqueeze(1).to(device)
+
     sig = inspect.signature(model.rollout)
     kwargs = {'history_size': n_context} if 'history_size' in sig.parameters else {}
     with torch.no_grad():
@@ -50,6 +55,9 @@ def _rollout_lewm(model, pixels, actions, n_context, device):
     pred_emb = info['predicted_emb'][0, 0]  # (n_context + n_pred + 1, D)
 
     gt_batch = {'pixels': pixels.to(device), 'action': actions.to(device)}
+    if extra:
+        for k, v in extra.items():
+            gt_batch[k] = v.to(device)
     with torch.no_grad():
         model.encode(gt_batch)
     gt_emb = gt_batch['emb'][0]  # (T_total, D)
@@ -76,9 +84,9 @@ def _rollout_prejepa(model, pixels, actions, n_context, device):
 #  Episode window sampling (NaN-boundary detection)                   #
 # ------------------------------------------------------------------ #
 
-def _sample_episodes(cfg, n_total_steps):
+def _sample_episodes(cfg, n_total_steps, frameskip):
     dataset = swm.data.load_dataset(
-        cfg.dataset, num_steps=n_total_steps, frameskip=cfg.eval.frameskip,
+        cfg.dataset, num_steps=n_total_steps, frameskip=frameskip,
         transform=None, keys_to_load=list(cfg.eval.keys_to_load),
     )
     imagenet = dt.dataset_stats.ImageNet
@@ -133,22 +141,46 @@ def run(cfg: DictConfig):
         )
     print(f'  n_context (history_size) = {n_context}  [read from model]')
 
+    # infer frameskip from model's expected action input dim vs raw dataset action dim
+    if hasattr(model, 'action_encoder') and hasattr(model.action_encoder, 'input_dim'):
+        model_action_input_dim = model.action_encoder.input_dim
+        _probe = swm.data.load_dataset(
+            cfg.dataset, num_steps=1, frameskip=1,
+            transform=None, keys_to_load=['action'],
+        )
+        raw_action_dim = next(iter(DataLoader(_probe, batch_size=1)))['action'].shape[-1]
+        frameskip = model_action_input_dim // raw_action_dim
+        if frameskip * raw_action_dim != model_action_input_dim:
+            raise ValueError(
+                f'action_encoder.input_dim={model_action_input_dim} is not divisible by '
+                f'raw_action_dim={raw_action_dim} — cannot infer frameskip'
+            )
+        print(f'  frameskip = {frameskip}  '
+              f'[inferred from action_encoder.input_dim={model_action_input_dim} / raw_action_dim={raw_action_dim}]')
+    else:
+        frameskip = cfg.eval.frameskip
+        print(f'  frameskip = {frameskip}  [from config — model has no action_encoder.input_dim]')
+
     n_pred_steps = cfg.eval.n_pred_steps
     n_total      = n_context + n_pred_steps
 
     print(f'Sampling {cfg.eval.n_episodes} episode windows '
           f'(context={n_context}, pred={n_pred_steps}) …')
-    episodes = _sample_episodes(cfg, n_total)
+    episodes = _sample_episodes(cfg, n_total, frameskip)
     print(f'  Found {len(episodes)} windows')
 
-    rollout_fn = _rollout_prejepa if cfg.model.is_prejepa else _rollout_lewm
+    _CORE_KEYS = {'pixels', 'action'}
 
     all_mse = []
     for i, batch in enumerate(episodes):
         pixels  = batch['pixels']   # (1, n_total, C, H, W)
         actions = batch['action']   # (1, n_total, action_dim)
+        extra   = {k: v for k, v in batch.items() if k not in _CORE_KEYS}
 
-        pred_emb, gt_emb = rollout_fn(model, pixels, actions, n_context, device)
+        if cfg.model.is_prejepa:
+            pred_emb, gt_emb = _rollout_prejepa(model, pixels, actions, n_context, device)
+        else:
+            pred_emb, gt_emb = _rollout_lewm(model, pixels, actions, n_context, device, extra)
 
         step_mse = []
         for t in range(n_context, min(n_context + n_pred_steps, gt_emb.shape[0])):

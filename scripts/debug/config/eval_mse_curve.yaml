@@ -16,11 +16,12 @@ eval:
   n_pred_steps: 20   # autoregressive steps beyond context
   n_episodes: 50     # episode windows to average over
   image_size: 224
-  frameskip: 1
+  frameskip: 1  # overridden automatically — inferred from model.action_encoder.input_dim
   keys_to_load:
     - pixels
     - action
-    # - state   # add if model was trained with state conditioning
+    # - proprio  # add for TwoRoom / models trained with proprioception conditioning
+    # - state    # add for CloudGripper / models trained with state conditioning
 
 output:
   path: mse_curve.png   # set to null to show interactively instead of saving
