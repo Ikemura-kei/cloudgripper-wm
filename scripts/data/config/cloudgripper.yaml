@@ -18,7 +18,7 @@ use_mock: false
 # --- World ---
 world:
   image_shape: [180, 320]
-  max_episode_steps: 85
+  max_episode_steps: 70
   dwell_time: 0.025
   max_delta: 0.15
 

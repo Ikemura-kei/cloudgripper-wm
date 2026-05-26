@@ -1,0 +1,26 @@
+defaults:
+  - _self_
+
+# Path to weights_epoch_N.pt (absolute, or relative to ~/.stable-worldmodel/checkpoints/)
+checkpoint: ???
+
+# Path to dataset (.lance / .h5 / folder)
+dataset: ???
+
+model:
+  # n_context is read automatically from model.predictor.num_frames (LeWM)
+  # or model.history_size — no need to set it manually
+  is_prejepa: false  # set true for PreJEPA (different rollout signature)
+
+eval:
+  n_pred_steps: 20   # autoregressive steps beyond context
+  n_episodes: 50     # episode windows to average over
+  image_size: 224
+  frameskip: 1
+  keys_to_load:
+    - pixels
+    - action
+    # - state   # add if model was trained with state conditioning
+
+output:
+  path: mse_curve.png   # set to null to show interactively instead of saving
