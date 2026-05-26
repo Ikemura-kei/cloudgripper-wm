@@ -1,0 +1,40 @@
+defaults:
+  - _self_
+
+# Path to LeWM weights.pt (absolute, or relative to ~/.stable-worldmodel/checkpoints/)
+checkpoint: ???
+
+# Path to dataset (.lance / .h5 / folder)
+dataset: ???
+
+decoder:
+  epochs: 20
+  lr: 1.0e-3
+  batch_size: 128
+  num_workers: 0
+  num_steps: 4               # window size for decoder training dataset (n_context + 1)
+  seed: 42
+  train_split: 0.9
+  save_path: decoder.pt      # where to save the trained decoder
+  load_path: null            # set to skip training and load an existing decoder
+
+wandb:
+  enabled: false
+  config:
+    project: cloudgripper-wm
+    name: eval_decode
+
+eval:
+  n_pred_steps: 20           # autoregressive steps beyond context
+  n_episodes: 5              # episodes to visualise; -1 = all available
+  image_size: 224
+  frameskip: 1               # overridden automatically from model.action_encoder.input_dim
+  keys_to_load:
+    - pixels
+    - action
+    # - proprio  # add for TwoRoom / models trained with proprioception conditioning
+    # - state    # add for CloudGripper / models trained with state conditioning
+
+output:
+  dir: decode_eval/          # output directory for MP4s
+  fps: 4
