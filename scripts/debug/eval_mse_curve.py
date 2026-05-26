@@ -20,6 +20,7 @@ from omegaconf import DictConfig
 from torch.utils.data import DataLoader
 
 import stable_worldmodel as swm
+from stable_worldmodel.data import column_normalizer
 from stable_worldmodel.wm.utils import load_pretrained
 from stable_pretraining import data as dt
 
@@ -67,10 +68,15 @@ def _sample_episodes(cfg, n_total_steps, frameskip):
         transform=None, keys_to_load=list(cfg.eval.keys_to_load),
     )
     imagenet = dt.dataset_stats.ImageNet
-    dataset.transform = dt.transforms.Compose(
+    transforms = [
         dt.transforms.ToImage(**imagenet, source='pixels', target='pixels'),
         dt.transforms.Resize(cfg.eval.image_size, source='pixels', target='pixels'),
-    )
+    ]
+    # z-score normalise every non-pixel key, matching training preprocessing
+    for col in cfg.eval.keys_to_load:
+        if not col.startswith('pixels'):
+            transforms.append(column_normalizer(dataset, col, col))
+    dataset.transform = dt.transforms.Compose(*transforms)
 
     # clip_indices is [(ep_idx, start), ...]; start==0 means beginning of episode.
     # All windows are guaranteed within a single episode by the dataset itself.
