@@ -19,7 +19,7 @@ from stable_worldmodel.wm.loss import SIGReg
 from lightning.pytorch.callbacks import Callback
 from stable_worldmodel.wm.utils import save_pretrained
 
-
+# Needed since we may use only one worker.
 _orig_on_train_start = spt.Module.on_train_start
 
 def _on_train_start_compat(self):
@@ -68,6 +68,7 @@ class SaveCkptCallback(Callback):
             model,
             run_name=self.run_name,
             config=self.cfg,
+            config_key='model',
             filename=f'weights_epoch_{epoch}.pt',
         )
 

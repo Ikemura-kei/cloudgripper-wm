@@ -17,3 +17,5 @@ multirun/
 *.token
 
 data/*
+
+misc/
