@@ -104,7 +104,7 @@ class DecoderModule(pl.LightningModule):
         emb    = self._encode(batch)
         recon  = self.decoder(emb, target_size=(flat.shape[-2], flat.shape[-1]))
         loss   = F.mse_loss(recon, flat)
-        self.log(f'{stage}/mse_loss', loss, on_epoch=True, on_step=False, prog_bar=True)
+        self.log(f'{stage}/mse_loss', loss, on_epoch=True, on_step=(stage == 'train'), prog_bar=True)
         return loss, recon, flat
 
     def training_step(self, batch, batch_idx):

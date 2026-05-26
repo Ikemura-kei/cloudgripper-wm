@@ -11,7 +11,7 @@ decoder:
   epochs: 20
   lr: 1.0e-3
   batch_size: 128
-  num_workers: 0
+  num_workers: 4
   num_steps: 4               # window size for decoder training dataset (n_context + 1)
   seed: 42
   train_split: 0.9
