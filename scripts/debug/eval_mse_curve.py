@@ -155,11 +155,35 @@ def run(cfg: DictConfig):
         print(f'  frameskip = {frameskip}  [from config — model has no action_encoder.input_dim]')
 
     n_pred_steps = cfg.eval.n_pred_steps
-    n_total      = n_context + n_pred_steps
+
+    # cap n_pred_steps to what the dataset episodes can actually support
+    _probe_ds = swm.data.load_dataset(
+        cfg.dataset, num_steps=1, frameskip=frameskip,
+        transform=None, keys_to_load=['action'],
+    )
+    max_ep_effective = int(np.array(_probe_ds.lengths).max()) // frameskip
+    max_pred = max_ep_effective - n_context
+    if max_pred <= 0:
+        raise ValueError(
+            f'No episode is long enough for even a single prediction step. '
+            f'Longest episode has {max_ep_effective} effective steps '
+            f'(after frameskip={frameskip}), but n_context={n_context} alone requires {n_context}.'
+        )
+    if n_pred_steps > max_pred:
+        print(f'  n_pred_steps capped {n_pred_steps} → {max_pred} '
+              f'(max episode has {max_ep_effective} effective steps, n_context={n_context})')
+        n_pred_steps = max_pred
+
+    n_total = n_context + n_pred_steps
 
     print(f'Sampling {cfg.eval.n_episodes} episode windows '
           f'(context={n_context}, pred={n_pred_steps}) …')
     episodes = _sample_episodes(cfg, n_total, frameskip)
+    if not episodes:
+        raise RuntimeError(
+            f'No episodes found with {n_total} steps (frameskip={frameskip}). '
+            f'Try reducing eval.n_pred_steps.'
+        )
     print(f'  Found {len(episodes)} windows')
 
     _CORE_KEYS = {'pixels', 'action'}
