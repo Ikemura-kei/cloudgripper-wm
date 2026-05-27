@@ -27,8 +27,8 @@ wandb:
     name: ${output_name}
 
 eval:
-  n_pred_steps: 20           # autoregressive steps beyond context
-  n_episodes: 5              # episodes to visualise; -1 = all available
+  n_pred_steps: 50           # autoregressive steps beyond context
+  n_episodes: 20              # episodes to visualise; -1 = all available
   image_size: 224
   frameskip: 1               # overridden automatically from model.action_encoder.input_dim
   keys_to_load:
