@@ -286,6 +286,19 @@ def run(cfg: DictConfig) -> None:
     print(f'Run name:  {cfg.output_name}')
     print(f'Save path: {cfg.decoder.save_path}')
 
+    # ---- Output directory -------------------------------------------- #
+    # train+eval: folder named after output_name (matches WandB run)
+    # eval only:  folder named after timestamp alone
+    if cfg.decoder.load_path:
+        out_dir = Path(cfg.output.eval_dir) / ts
+    else:
+        out_dir = Path(cfg.output.train_eval_dir) / cfg.output_name
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    with open(out_dir / 'config.yaml', 'w') as _f:
+        OmegaConf.save(cfg, _f)
+    print(f'Output dir: {out_dir}/')
+
     # ---- LeWM -------------------------------------------------------- #
     print(f'Loading LeWM from {cfg.checkpoint} …')
     model = _load_lewm(cfg.checkpoint).to(device).eval()
@@ -385,8 +398,6 @@ def run(cfg: DictConfig) -> None:
         raise RuntimeError('No episodes found — try reducing eval.n_pred_steps.')
     print(f'  Found {len(episodes)} episodes')
 
-    out_dir = Path(cfg.output.dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
     _CORE = {'pixels', 'action'}
 
     for ep_idx, batch in enumerate(tqdm(episodes, desc='Generating videos')):
@@ -428,7 +439,7 @@ def run(cfg: DictConfig) -> None:
         vid_path = out_dir / f'episode_{ep_idx:04d}.mp4'
         _write_video(frames, vid_path, cfg.output.fps)
 
-    print(f'\nDone — {len(episodes)} videos saved to {out_dir}/')
+    print(f'\nDone — {len(episodes)} videos + config saved to {out_dir}/')
 
 
 if __name__ == '__main__':

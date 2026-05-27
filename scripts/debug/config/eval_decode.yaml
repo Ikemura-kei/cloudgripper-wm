@@ -38,5 +38,6 @@ eval:
     # - state    # add for CloudGripper / models trained with state conditioning
 
 output:
-  dir: decode_eval/          # output directory for MP4s
+  train_eval_dir: outputs/decoder_train_eval  # used when both phases run
+  eval_dir: outputs/decoder_eval              # used when load_path is set (eval only)
   fps: 4
