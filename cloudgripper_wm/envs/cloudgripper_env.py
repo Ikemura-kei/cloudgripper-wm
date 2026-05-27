@@ -97,6 +97,7 @@ class CloudGripperEnv(gym.Env):
     def step(self, action: np.ndarray) -> tuple[dict, float, bool, bool, dict]:
         action = np.asarray(action, dtype=np.float32)
         self._target_pos = np.clip(self._target_pos + action, 0.0, 1.0)
+        self._target_pos[4] = np.clip(self._target_pos[4], 0.2, 0.825)  # gripper range [0.2, 0.8]
         self._send_absolute()
 
         time.sleep(self.dwell_time)
