@@ -11,6 +11,7 @@ Usage:
         'eval.keys_to_load=[pixels,action]'
 """
 
+import datetime
 from pathlib import Path
 
 import hydra
@@ -204,6 +205,16 @@ def run(cfg: DictConfig):
     std_mse  = all_mse.std(axis=0)
     steps    = np.arange(1, len(mean_mse) + 1)
 
+    # ---- output directory ------------------------------------------ #
+    ts      = datetime.datetime.now().strftime('%y-%m-%d_%H-%M-%S')
+    out_dir = Path(cfg.output.dir) / ts
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # ---- save config ----------------------------------------------- #
+    from omegaconf import OmegaConf
+    with open(out_dir / 'config.yaml', 'w') as f:
+        OmegaConf.save(cfg, f)
+
     # ---- text table ------------------------------------------------ #
     print(f'\nEmbedding MSE over {len(all_mse)} episodes  '
           f'[{Path(cfg.checkpoint).parent.name}]')
@@ -213,6 +224,19 @@ def run(cfg: DictConfig):
         steps, mean_mse, std_mse, all_mse.min(axis=0), all_mse.max(axis=0)
     ):
         print(f'{s:>5}  {m:>10.6f}  {sd:>10.6f}  {mn:>10.6f}  {mx:>10.6f}')
+
+    # ---- save raw data --------------------------------------------- #
+    data_path = out_dir / 'mse_data.npz'
+    np.savez(
+        data_path,
+        all_mse=all_mse,
+        mean=mean_mse,
+        std=std_mse,
+        min=all_mse.min(axis=0),
+        max=all_mse.max(axis=0),
+        steps=steps,
+    )
+    print(f'Data saved  → {data_path}')
 
     # ---- plot ------------------------------------------------------ #
     try:
@@ -233,14 +257,14 @@ def run(cfg: DictConfig):
         ax.grid(True, alpha=0.3)
         plt.tight_layout()
 
-        if cfg.output.path:
-            plt.savefig(cfg.output.path, dpi=150)
-            print(f'\nPlot saved → {cfg.output.path}')
-        else:
-            plt.show()
+        plot_path = out_dir / 'mse_curve.png'
+        plt.savefig(plot_path, dpi=150)
+        print(f'Plot saved  → {plot_path}')
 
     except ImportError:
         print('\nmatplotlib not available — skipping plot')
+
+    print(f'\nAll outputs → {out_dir}/')
 
 
 if __name__ == '__main__':

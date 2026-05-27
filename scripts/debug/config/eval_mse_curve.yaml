@@ -19,4 +19,4 @@ eval:
     # - state    # add for CloudGripper / models trained with state conditioning
 
 output:
-  path: mse_curve.png   # set to null to show interactively instead of saving
+  dir: outputs/mse_eval  # timestamped subdirectory created automatically under this base
