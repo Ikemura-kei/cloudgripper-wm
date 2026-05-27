@@ -16,7 +16,7 @@ import hydra
 import lance
 from loguru import logger as logging
 from omegaconf import DictConfig
-from stable_worldmodel.policy import RandomPolicy
+from hydra.utils import instantiate
 
 from cloudgripper_wm.world import CloudGripperWorld
 
@@ -45,7 +45,7 @@ def run(cfg: DictConfig) -> None:
         **cfg.world,
     )
 
-    world.set_policy(RandomPolicy(seed=seed_start))
+    world.set_policy(instantiate(cfg.policy, seed=seed_start))
 
     max_retries = 1000
     for ep in range(cfg.episodes):

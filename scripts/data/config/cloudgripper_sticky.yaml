@@ -1,0 +1,9 @@
+defaults:
+  - cloudgripper
+  - _self_
+
+policy:
+  _target_: cloudgripper_wm.policies.StickyRandomPolicy
+  min_repeat: 3
+  max_repeat: 8
+  noise_std: 0.03

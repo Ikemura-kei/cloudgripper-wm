@@ -25,3 +25,7 @@ world:
 # --- Collection ---
 episodes: 80
 seed: 427
+
+# --- Policy ---
+policy:
+  _target_: stable_worldmodel.policy.RandomPolicy
