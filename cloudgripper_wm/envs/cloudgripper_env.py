@@ -1,4 +1,6 @@
 import os
+import threading
+from contextlib import nullcontext
 import time
 import cv2
 import numpy as np
@@ -35,6 +37,7 @@ class CloudGripperEnv(gym.Env):
         dwell_time: float = 0.5,
         render_mode: str | None = None,
         use_mock: bool = False,
+        show_display: bool = False,
     ):
         super().__init__()
         self.render_mode = render_mode
@@ -65,6 +68,16 @@ class CloudGripperEnv(gym.Env):
         self._target_pos: np.ndarray = DEFAULT_HOME_POS.copy()
         self._last_sent_pos: np.ndarray = np.full(5, np.inf, dtype=np.float32)
         self._last_top_img: np.ndarray | None = None
+        self._display_thread: threading.Thread | None = None
+        self._display_stop = threading.Event()
+        if show_display:
+            self._img_lock = threading.Lock()
+            self._display_thread = threading.Thread(
+                target=self._display_loop, daemon=True, name=f"display-{self._robot_name}"
+            )
+            self._display_thread.start()
+        else:
+            self._img_lock = nullcontext()
 
     # ------------------------------------------------------------------
     # Core Gymnasium interface
@@ -87,7 +100,8 @@ class CloudGripperEnv(gym.Env):
 
         top_img, _ = self.robot.getImageTop()
         base_img_raw, _ = self.robot.getImageBase()
-        self._last_top_img = top_img
+        with self._img_lock:
+            self._last_top_img = top_img
         base_img = cv2.cvtColor(base_img_raw, cv2.COLOR_BGR2RGB)
 
         obs = {"state": self._get_current_state()}
@@ -104,7 +118,8 @@ class CloudGripperEnv(gym.Env):
 
         top_img, _ = self.robot.getImageTop()
         base_img_raw, _ = self.robot.getImageBase()
-        self._last_top_img = top_img
+        with self._img_lock:
+            self._last_top_img = top_img
         base_img = cv2.cvtColor(base_img_raw, cv2.COLOR_BGR2RGB)
 
         obs = {"state": self._get_current_state()}
@@ -122,17 +137,33 @@ class CloudGripperEnv(gym.Env):
         return obs, reward, terminated, False, info
 
     def render(self) -> np.ndarray:
-        if self._last_top_img is None:
-            top_img, _ = self.robot.getImageTop()
-            self._last_top_img = top_img
-        return cv2.cvtColor(self._last_top_img, cv2.COLOR_BGR2RGB)
+        with self._img_lock:
+            img = self._last_top_img
+        if img is None:
+            img, _ = self.robot.getImageTop()
+            with self._img_lock:
+                self._last_top_img = img
+        return cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
     def close(self) -> None:
+        if self._display_thread is not None:
+            self._display_stop.set()
+            self._display_thread.join(timeout=2.0)
         RobotPool.release(self._robot_name)
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _display_loop(self) -> None:
+        """Background thread: show the latest top camera image via cv2.imshow."""
+        while not self._display_stop.is_set():
+            with self._img_lock:
+                img = self._last_top_img
+            if img is not None:
+                cv2.imshow(self._robot_name, img)
+            cv2.waitKey(10)  # 30 ms → ~33 fps max; also pumps the OpenCV event loop
+        cv2.destroyWindow(self._robot_name)
 
     def _send_absolute(self) -> None:
         x, y, z, rot_norm, grip = self._target_pos
