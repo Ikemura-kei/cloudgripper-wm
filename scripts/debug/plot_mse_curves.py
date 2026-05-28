@@ -63,8 +63,9 @@ def main() -> None:
     entries.sort(key=lambda x: _sort_key(x[0]))
 
     # ---- plot ---------------------------------------------------------- #
-    cmap   = plt.cm.viridis
-    colors = [cmap(i / max(len(entries) - 1, 1)) for i in range(len(entries))]
+    colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+    if len(entries) > len(colors):
+        colors = [plt.cm.tab20(i / len(entries)) for i in range(len(entries))]
 
     fig, ax = plt.subplots(figsize=(10, 5))
 
@@ -78,7 +79,11 @@ def main() -> None:
             ax.fill_between(steps,
                             mean_mse - std_mse,
                             mean_mse + std_mse,
-                            alpha=0.15, color=color)
+                            alpha=0.08, color=color)
+            ax.plot(steps, mean_mse - std_mse, linestyle='--',
+                    linewidth=0.8, color=color, alpha=0.6)
+            ax.plot(steps, mean_mse + std_mse, linestyle='--',
+                    linewidth=0.8, color=color, alpha=0.6)
 
     ax.set_xlabel('Prediction step')
     ax.set_ylabel('Embedding MSE')
