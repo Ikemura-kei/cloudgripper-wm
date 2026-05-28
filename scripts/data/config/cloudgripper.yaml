@@ -7,8 +7,8 @@ hydra:
     chdir: false
 
 # --- Output ---
-output: data/cloudgripper.lance
-output_name: cloudgripper
+# Folder that will contain {name}.lance and config.yaml
+output: data/cloudgripper
 
 # --- Robots ---
 robots:
