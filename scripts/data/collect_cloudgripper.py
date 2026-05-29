@@ -56,8 +56,8 @@ def _check_config_compatibility(cfg: DictConfig, output: str) -> None:
     config_path = _config_path(output)
     if not config_path.exists():
         return
-    saved = OmegaConf.to_container(OmegaConf.load(config_path), resolve=True)
-    current = OmegaConf.to_container(cfg, resolve=True)
+    saved = OmegaConf.to_container(OmegaConf.load(config_path), resolve=False)
+    current = OmegaConf.to_container(cfg, resolve=False)
     saved.pop('episodes', None)
     current.pop('episodes', None)
     if current != saved:

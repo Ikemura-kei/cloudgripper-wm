@@ -9,6 +9,7 @@ hydra:
 # --- Output ---
 # Folder that will contain {name}.lance and config.yaml
 output: data/cloudgripper
+output_name: cloudgripper
 
 # --- Robots ---
 robots:

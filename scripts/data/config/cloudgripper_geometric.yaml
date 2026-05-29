@@ -4,7 +4,7 @@ defaults:
 
 policy:
   _target_: cloudgripper_wm.policies.GeometricTrajectoryPolicy
-  shape: "square"
+  shape: "circle"
   center: [0.5, 0.5]
   size: 0.95
-  steps_per_loop: 30
+  steps_per_loop: 25
