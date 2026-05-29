@@ -16,6 +16,6 @@ multirun/
 .env
 *.token
 
-data/*
+data/*/
 
 misc/

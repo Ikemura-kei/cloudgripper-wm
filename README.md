@@ -24,6 +24,8 @@ cloudgripper-wm/
 │   ├── data/
 │   └── train/
 ├── tests/
+├── data/
+├── misc/
 └── third_party/
     ├── cloudgripper-api/
     └── stable-worldmodel/
@@ -39,6 +41,8 @@ cloudgripper-wm/
 | `scripts/data/` | Data collection entry point (`collect_cloudgripper.py`), Hydra configs, and inspection/extraction utilities |
 | `scripts/train/` | Training entry points (`prejepa.py` for DINO-WM) and their Hydra configs |
 | `tests/` | Unit tests — use `GripperRobotMock` so no hardware is needed |
+| `data/` | Default output directory for collected datasets (gitignored; a `.placeholder` file keeps the folder tracked) |
+| `misc/` | Scratch space for visualizations and debugging outputs (extracted episodes, plots, etc.) — gitignored |
 | `third_party/cloudgripper-api/` | HTTP client for the CloudGripper robots *(git submodule)* |
 | `third_party/stable-worldmodel/` | World model framework providing training, data pipelines, and planning infrastructure *(git submodule)* |
 
