@@ -25,16 +25,19 @@ cloudgripper-wm/
 │   │   └── rope_manip.py      # RopeManipTask (stub)
 │   ├── policies/
 │   │   ├── __init__.py
-│   │   ├── random_push.py    # Scripted random pushing policy (not yet implemented)
-│   │   └── heuristic_grasp.py  # Scripted pick-and-place policy (not yet implemented)
+│   │   ├── sticky_random_policy.py   # StickyRandomPolicy — holds a sampled action for N steps
+│   │   └── geometric_trajectory_policy.py  # GeometricTrajectoryPolicy — circle/square/triangle in X-Y
 │   └── configs/               # (unused — configs live under scripts/data/config and scripts/train/config)
 ├── scripts/
 │   ├── data/
-│   │   ├── collect.py         # Data collection entry point (Hydra, working)
+│   │   ├── collect_cloudgripper.py  # Data collection entry point (Hydra, working)
+│   │   ├── inspect_data.py          # Visualize collected Lance dataset as video
+│   │   ├── extract_episode.py       # Extract a single episode to images + CSV
 │   │   └── config/
-│   │       ├── collect.yaml   # Collection config (robots, episodes, dwell, etc.)
+│   │       ├── cloudgripper.yaml          # Default collection config (random policy)
+│   │       ├── cloudgripper_geometric.yaml # Geometric trajectory policy config
 │   │       └── launcher/
-│   │           └── local.yaml # W&B / launcher settings
+│   │           └── local.yaml             # W&B / launcher settings
 │   ├── train/
 │   │   ├── prejepa.py         # DINO-WM training entry point (Hydra)
 │   │   └── config/
@@ -85,21 +88,22 @@ uv run pytest tests/       # run tests
 All scripts use Hydra — any config key can be overridden on the CLI.
 
 ```bash
-# Data collection (defaults: robot23, 10 episodes, 0.5s dwell)
-uv run python scripts/data/collect.py
-uv run python scripts/data/collect.py robots=[robot1,robot2] episodes=100 output=data/run1.lance
+# Data collection — `episodes` is the total target (resumes automatically)
+uv run python scripts/data/collect_cloudgripper.py output=data/my_run
+uv run python scripts/data/collect_cloudgripper.py output=data/my_run robots=[robot1,robot2] episodes=100
+uv run python scripts/data/collect_cloudgripper.py --config-name cloudgripper_geometric output=data/shapes
 
 # Training (dataset_name is required)
-uv run python scripts/train/prejepa.py dataset_name=$(pwd)/data/collect.lance
-uv run python scripts/train/prejepa.py dataset_name=$(pwd)/data/collect.lance trainer.max_epochs=200
+uv run python scripts/train/prejepa.py dataset_name=$(pwd)/data/my_run/my_run.lance
+uv run python scripts/train/prejepa.py dataset_name=$(pwd)/data/my_run/my_run.lance trainer.max_epochs=200
 
 # Real-robot smoke test
 uv run python scripts/test_real_robot.py            # defaults to robot23
 uv run python scripts/test_real_robot.py --robot robot5 --steps 20
 
 # Data inspection
-uv run python scripts/inspect_data.py data/collect.lance
-uv run python scripts/inspect_data.py data/collect.lance --save-dir /tmp/videos
+uv run python scripts/data/inspect_data.py data/my_run/my_run.lance
+uv run python scripts/data/inspect_data.py data/my_run/my_run.lance --save-dir /tmp/videos
 ```
 
 ### Dev robot
@@ -466,11 +470,13 @@ world = swm.World("cloudgripper/CubePush-v0", num_envs=8, image_shape=(64, 64))
 | `RobotPool` | ✅ Done | Always required, even for 1 robot |
 | Gymnasium registration | ✅ Done | All 4 env IDs registered |
 | `CloudGripperWorld` wrapper | ✅ Done | `cloudgripper_wm/world.py` |
-| Data collection script | ✅ Done | `scripts/data/collect.py`, Hydra-based, verified on robot23 |
-| Data inspection | ✅ Done | `scripts/inspect_data.py` — video player + action overlay |
+| Data collection script | ✅ Done | `scripts/data/collect_cloudgripper.py` — Hydra-based, resume-safe, config saved alongside dataset |
+| Data inspection | ✅ Done | `scripts/data/inspect_data.py` — video player + action overlay |
 | Training script | ✅ Done | `scripts/train/prejepa.py`, DINO-WM via stable-worldmodel's prejepa pipeline |
+| `StickyRandomPolicy` | ✅ Done | `policies/sticky_random_policy.py` — action persistence + Gaussian noise |
+| `GeometricTrajectoryPolicy` | ✅ Done | `policies/geometric_trajectory_policy.py` — circle/square/triangle in X-Y, sticky-random on other DoFs |
+| Live display thread | ✅ Done | `CloudGripperEnv(show_display=True)` shows top camera in a background thread via `cv2.imshow` |
 | Tests | ❌ Not written | Test files exist but are empty |
-| Scripted policies | ❌ Not written | `policies/random_push.py`, `heuristic_grasp.py` are stubs |
 | Reward & success implementations | ❌ Deferred | Only needed for RL/MPC evaluation |
 
 ## Training

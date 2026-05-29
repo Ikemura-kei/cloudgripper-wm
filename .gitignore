@@ -17,5 +17,6 @@ multirun/
 *.token
 
 data/*/
+data/*.zip
 
 misc/
