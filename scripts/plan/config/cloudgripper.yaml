@@ -1,0 +1,44 @@
+defaults:
+  - launcher: local
+  - solver: cem
+  - _self_
+
+world:
+  env_name: cloudgripper/Gripper-v0
+  num_envs: ${eval.num_eval}
+  image_shape: [180, 320]  # must match dataset storage resolution; policy transform resizes to eval.img_size
+  max_episode_steps: 70  # overridden to 2*eval_budget by the script
+  dwell_time: 0.025
+  max_delta: 0.15
+  show_display: false    # set true to open a cv2 window during eval (needs display)
+  use_mock: false         # set false + CLOUDGRIPPER_TOKEN for real robot
+  robot_names: [robot23] # one name per num_eval env
+
+dataset:
+  stats: ${eval.dataset_name}
+  keys_to_cache:
+    - action
+    - state
+
+seed: 42
+policy: /home/kei/.stable-worldmodel/checkpoints/lewm-26-05-27-14-28-23-pzn/weights_epoch_30.pt # ckpt name or random
+
+plan_config:
+  horizon: 3
+  receding_horizon: 3
+  history_len: 3   # must match wm.history_size from training
+  action_block: 1  # frameskip
+
+# evaluation from dataset (replay expert trajectories)
+eval:
+  num_eval: 1
+  goal_offset_steps: 20
+  eval_budget: 30
+  img_size: 224
+  dataset_name: /home/kei/.stable-worldmodel/datasets/cloudgripper/square/square.lance
+
+compile: false
+bf16: false
+
+output:
+  filename: cloudgripper_square.txt

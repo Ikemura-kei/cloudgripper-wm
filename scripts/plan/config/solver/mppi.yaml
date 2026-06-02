@@ -1,0 +1,10 @@
+_target_: stable_worldmodel.solver.MPPISolver
+model: ???
+batch_size: 1
+num_samples: 2500
+var_scale: 1.8        # tighter noise than CEM — MPPI uses soft weighting so it's less sensitive to outliers
+n_steps: 20           # MPPI converges faster than CEM; fewer iterations needed
+topk: 300             # elite subset for weighted average; null to use all samples
+temperature: 0.4      # lower = sharper focus on best samples; higher = more averaging
+device: "cuda"
+seed: ${seed}
