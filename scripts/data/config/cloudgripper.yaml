@@ -19,10 +19,14 @@ use_mock: false
 # --- World ---
 world:
   image_shape: [180, 320]
-  max_episode_steps: 70
-  dwell_time: 0.025
+  max_episode_steps: 10
+  dwell_time: 0.05
+  reset_dwell_time: 2.0
   max_delta: 0.15
   show_display: false
+  dof_wise: false
+  use_cur_state: true
+  use_ws: false
 
 # --- Collection ---
 episodes: 80

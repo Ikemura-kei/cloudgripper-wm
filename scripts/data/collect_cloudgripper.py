@@ -100,22 +100,25 @@ def run(cfg: DictConfig) -> None:
     world.set_policy(instantiate(cfg.policy, seed=seed_start))
 
     max_retries = 1000
-    for ep in range(to_collect):
-        seed = seed_start + ep
-        for attempt in range(1, max_retries + 1):
-            try:
-                world.collect(lance_out, episodes=1, seed=seed)
-                break
-            except Exception as exc:
-                logging.warning(f'Episode {n_existing + ep + 1} attempt {attempt}/{max_retries} failed: {exc}')
-                if attempt == max_retries:
-                    raise RuntimeError(
-                        f'Episode {n_existing + ep + 1} failed after {max_retries} attempts'
-                    ) from exc
-                seed += to_collect  # offset so retries don't collide with primary episode seeds
-        logging.info(f'Episode {n_existing + ep + 1}/{cfg.episodes} saved → {lance_out}')
-
-    world.close()
+    try:
+        for ep in range(to_collect):
+            seed = seed_start + ep
+            for attempt in range(1, max_retries + 1):
+                try:
+                    world.collect(lance_out, episodes=1, seed=seed)
+                    break
+                except Exception as exc:
+                    logging.warning(f'Episode {n_existing + ep + 1} attempt {attempt}/{max_retries} failed: {exc}')
+                    if attempt == max_retries:
+                        raise RuntimeError(
+                            f'Episode {n_existing + ep + 1} failed after {max_retries} attempts'
+                        ) from exc
+                    seed += to_collect  # offset so retries don't collide with primary episode seeds
+            logging.info(f'Episode {n_existing + ep + 1}/{cfg.episodes} saved → {lance_out}')
+    except KeyboardInterrupt:
+        logging.warning('Interrupted — closing world and releasing robots.')
+    finally:
+        world.close()
     logging.success(f'Collected {to_collect} episodes → {lance_out} (total: {n_existing + to_collect})')
 
 

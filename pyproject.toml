@@ -15,6 +15,7 @@ dependencies = [
     "requests>=2.34.2",
     "scikit-learn>=1.7.2",
     "stable-worldmodel[env,train]",
+    "websocket-client>=1.0.0",
 ]
 
 [build-system]
