@@ -154,6 +154,7 @@ class CloudGripperEnv(gym.Env):
             terminated = False
 
         print(f"Step completed in {time.time() - start_time:.3f} seconds")
+
         return obs, reward, terminated, False, info
 
     def render(self) -> np.ndarray:
@@ -201,19 +202,19 @@ class CloudGripperEnv(gym.Env):
                 move_xy(float(x), float(y))
                 self._last_sent_pos[0] = x
                 self._last_sent_pos[1] = y
-                time.sleep(0.015)
+                time.sleep(0.01)
             if d[2] >= 0.01:
                 move_z(float(z))
                 self._last_sent_pos[2] = z
-                time.sleep(0.015)
+                time.sleep(0.01)
             if d[3] >= 0.01:
                 rotate(int(float(rot_norm) * 180))
                 self._last_sent_pos[3] = rot_norm
-                time.sleep(0.015)
+                time.sleep(0.01)
             if d[4] >= 0.01:
                 move_gripper(float(grip))
                 self._last_sent_pos[4] = grip
-                time.sleep(0.015)
+                time.sleep(0.01)
         else:
             step_action = self.robot.step_action_ws if self.use_ws else self.robot.step_action
             step_action([float(x), float(y), float(z), float(rot_norm) * 180, float(grip)])

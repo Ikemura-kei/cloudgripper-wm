@@ -97,12 +97,15 @@ def run(cfg: DictConfig) -> None:
         **cfg.world,
     )
 
-    world.set_policy(instantiate(cfg.policy, seed=seed_start))
+    policy = instantiate(cfg.policy, seed=seed_start)
+    world.set_policy(policy)
 
     max_retries = 1000
     try:
         for ep in range(to_collect):
             seed = seed_start + ep
+            if hasattr(policy, 'reset'):
+                policy.reset()
             for attempt in range(1, max_retries + 1):
                 try:
                     world.collect(lance_out, episodes=1, seed=seed)

@@ -7,4 +7,4 @@ policy:
   shape: "circle"
   center: [0.5, 0.5]
   size: 0.95
-  steps_per_loop: 25
+  steps_per_loop: 40
