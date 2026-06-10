@@ -16,6 +16,8 @@ cloudgripper-wm/
 │   ├── envs/
 │   │   ├── __init__.py        # gymnasium.register() for all task env IDs
 │   │   ├── cloudgripper_env.py  # Core Gymnasium env wrapping CloudGripper API
+│   │   ├── safe_cloudgripper_wrapper.py  # SafeCloudGripperWrapper — occupancy-based collision avoidance
+│   │   ├── constants.py       # Shared Y_RANGE / GRIPPER_RANGE clip constants
 │   │   └── robot_pool.py     # Thread-safe singleton assigning robot names to env instances
 │   ├── tasks/
 │   │   ├── __init__.py        # TASK_REGISTRY dict, get_task() factory
@@ -27,6 +29,13 @@ cloudgripper-wm/
 │   │   ├── __init__.py
 │   │   ├── sticky_random_policy.py   # StickyRandomPolicy — holds a sampled action for N steps
 │   │   └── geometric_trajectory_policy.py  # GeometricTrajectoryPolicy — circle/square/triangle in X-Y
+│   ├── utils/
+│   │   ├── cloudgripper_image_processor.py  # Camera undistortion / pixel<->world homography
+│   │   ├── coordinate_converter.py          # Camera/robot coordinate conversion helpers
+│   │   ├── get_finger_pos.py                # Gripper finger-tip geometry from (x,y,z,theta,w_grip)
+│   │   ├── occupancy.py                     # World-frame occupancy heightmap + 3D collision checks
+│   │   └── occupancy_viz.py                 # Shared 3D live-view helpers (sim + SafeCloudGripperWrapper)
+│   ├── camera_params/          # Per-robot camera calibration YAMLs (cam-to-robot, base camera)
 │   └── configs/               # (unused — configs live under scripts/data/config and scripts/train/config)
 ├── scripts/
 │   ├── data/
@@ -44,8 +53,14 @@ cloudgripper-wm/
 │   │       ├── prejepa.yaml   # CloudGripper PreJEPA training config (fully self-contained)
 │   │       └── launcher/
 │   │           └── local.yaml
-│   ├── inspect_data.py        # Visualize collected Lance dataset as video
-│   └── test_real_robot.py     # Interactive smoke test on real hardware
+│   ├── debug/
+│   │   ├── test_connection.py        # Smoke test: images + base camera undistortion on real hardware
+│   │   ├── teleop.py                 # Interactive teleop (no collision avoidance)
+│   │   ├── teleop_safe.py            # Interactive teleop via SafeCloudGripperWrapper, matplotlib UI
+│   │   ├── gripper_collision_sim.py  # Animate finger trajectories vs. occupancy heightmap
+│   │   ├── occupancy_demo.py         # Build heightmap from debug_base.jpg, save 3D viz
+│   │   └── object_segmentation.py    # Quick HSV-based object mask tuning on debug_base.jpg
+│   └── inspect_data.py        # Visualize collected Lance dataset as video
 ├── tests/
 │   ├── conftest.py            # Shared fixtures (empty — not yet written)
 │   ├── test_env_base.py       # (empty — not yet written)
@@ -98,8 +113,8 @@ uv run python scripts/train/prejepa.py dataset_name=$(pwd)/data/my_run/my_run.la
 uv run python scripts/train/prejepa.py dataset_name=$(pwd)/data/my_run/my_run.lance trainer.max_epochs=200
 
 # Real-robot smoke test
-uv run python scripts/test_real_robot.py            # defaults to robot23
-uv run python scripts/test_real_robot.py --robot robot5 --steps 20
+uv run python scripts/debug/test_connection.py      # defaults to robot23
+uv run python scripts/debug/teleop_safe.py --robot robot5  # interactive teleop w/ collision avoidance
 
 # Data inspection
 uv run python scripts/data/inspect_data.py data/my_run/my_run.lance
@@ -111,8 +126,9 @@ uv run python scripts/data/inspect_data.py data/my_run/my_run.lance --save-dir /
 - **robot23** is the designated development robot for testing without hardware setup
 - Set the token before any real-robot code: `export CLOUDGRIPPER_TOKEN=<token>`
   - Do NOT commit the token to any file — keep it in your shell environment only
-- Quick smoke test on real hardware: `uv run python scripts/test_real_robot.py`
-  - Defaults to robot23, 10 random steps, 0.5 s dwell
+- Quick smoke test on real hardware: `uv run python scripts/debug/test_connection.py`
+- Interactive teleop with collision avoidance: `uv run python scripts/debug/teleop_safe.py`
+  - Defaults to robot23
   - Pass `--help` for all options
 
 ## CloudGripper Robot API
@@ -212,6 +228,7 @@ class Policy:
 - `Box(-max_delta, max_delta, shape=(5,), dtype=float32)` → `[Δx, Δy, Δz, Δrotation, Δgripper]`
 - **Delta actions, not absolute.** The env maintains an internal `self._target_pos: np.ndarray` of shape `(5,)` representing `[x, y, z, rotation_norm, gripper]`, all in [0, 1].
 - Each step: `self._target_pos = np.clip(self._target_pos + action, 0.0, 1.0)`, then the clipped absolute values are sent to the robot API.
+- After the full [0,1] clip, `y` and `gripper` are further clipped to the ranges defined in `cloudgripper_wm/envs/constants.py` (`Y_RANGE = (0.1, 1.0)`, `GRIPPER_RANGE = (0.0, 1.0)`). `SafeCloudGripperWrapper` applies the same clamps to its candidate position so the two stay in sync.
 - `max_delta` is a configurable constructor parameter (default ~0.05–0.1). This caps how far the robot can move per step, producing smooth trajectories.
 - The CloudGripper API only accepts absolute coordinates, so the env is responsible for the delta-to-absolute conversion. The robot API never sees deltas.
 
@@ -228,7 +245,7 @@ self.robot.move_gripper(float(grip))          # 0=closed, 1=open
 
 #### Internal position tracking
 - `self._target_pos` is the *commanded* target, not the actual robot position (which may lag due to movement time).
-- On `reset()`, set `self._target_pos` to `self.task.home_pos()` if task is set, otherwise `DEFAULT_HOME_POS` `[0.5, 0.5, 0.0, 0.0, 1.0]` (center xy, bottom z, 0° rotation, gripper open). Note: z=0.0 means arm down — calibrated from real robot testing.
+- On `reset()`, set `self._target_pos` to `self.task.home_pos()` if task is set, otherwise `DEFAULT_HOME_POS` `[0.1, 0.1, 1.0, 0.0, 0.0]` (near-corner xy, top z, 0° rotation, gripper closed). Note: z=1.0 means arm up — calibrated from real robot testing.
 - The `"state"` in the observation space reports `self._target_pos` (the intended target). Optionally, a `"state_actual"` key can store the readback from `robot.get_state()` if the caller wants to compare.
 - Do NOT re-sync `_target_pos` from `get_state()` every step — it adds latency and the robot may not have reached the target yet. Only re-sync on `reset()` if needed.
 
@@ -239,7 +256,7 @@ self.robot.move_gripper(float(grip))          # 0=closed, 1=open
 - The `dwell_time` should be long enough that the robot approximately reaches `_target_pos` before the next observation is captured. With small `max_delta` values this is naturally satisfied.
 
 ### Reset behavior
-- Move to home position: `self.task.home_pos()` if task is set, otherwise `DEFAULT_HOME_POS` `[0.5, 0.5, 1.0, 0.0, 1.0]` (center xy, top z, 0° rotation, gripper open)
+- Move to home position: `self.task.home_pos()` if task is set, otherwise `DEFAULT_HOME_POS` `[0.1, 0.1, 1.0, 0.0, 0.0]` (near-corner xy, top z, 0° rotation, gripper closed)
 - Set `self._target_pos` accordingly
 - Send absolute commands to robot: `move_xy`, `move_z`, `rotate`, `gripper_open`
 - Object rearrangement on the workspace is manual/out-of-scope for now
@@ -334,7 +351,7 @@ CloudGripperEnv(task=None)              CloudGripperEnv(task="cube_push")
 from abc import ABC, abstractmethod
 import numpy as np
 
-DEFAULT_HOME_POS = np.array([0.5, 0.5, 0.0, 0.0, 1.0], dtype=np.float32)
+DEFAULT_HOME_POS = np.array([0.1, 0.1, 1.0, 0.0, 0.0], dtype=np.float32)
 
 class Task(ABC):
     """Base class for CloudGripper tasks. Subclass to define reward and success."""
@@ -476,6 +493,7 @@ world = swm.World("cloudgripper/CubePush-v0", num_envs=8, image_shape=(64, 64))
 | `StickyRandomPolicy` | ✅ Done | `policies/sticky_random_policy.py` — action persistence + Gaussian noise |
 | `GeometricTrajectoryPolicy` | ✅ Done | `policies/geometric_trajectory_policy.py` — circle/square/triangle in X-Y, sticky-random on other DoFs |
 | Live display thread | ✅ Done | `CloudGripperEnv(show_display=True)` shows top camera in a background thread via `cv2.imshow` |
+| `SafeCloudGripperWrapper` | ✅ Done | `envs/safe_cloudgripper_wrapper.py` — occupancy-heightmap collision check (`surface="top"`), blocks actions that would collide, optional live 3D view (`scripts/debug/teleop_safe.py`) |
 | Tests | ❌ Not written | Test files exist but are empty |
 | Reward & success implementations | ❌ Deferred | Only needed for RL/MPC evaluation |
 

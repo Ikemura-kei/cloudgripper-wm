@@ -7,6 +7,7 @@ import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
 
+from cloudgripper_wm.envs.constants import GRIPPER_RANGE, Y_RANGE
 from cloudgripper_wm.envs.robot_pool import RobotPool
 from cloudgripper_wm.tasks import get_task
 from cloudgripper_wm.tasks.base import DEFAULT_HOME_POS, Task
@@ -79,6 +80,7 @@ class CloudGripperEnv(gym.Env):
         self._target_pos: np.ndarray = DEFAULT_HOME_POS.copy()
         self._last_sent_pos: np.ndarray = np.full(5, np.inf, dtype=np.float32)
         self._last_top_img: np.ndarray | None = None
+        self._last_base_img: np.ndarray | None = None
         self._display_thread: threading.Thread | None = None
         self._display_stop = threading.Event()
         if show_display:
@@ -124,7 +126,8 @@ class CloudGripperEnv(gym.Env):
         
         action = np.asarray(action, dtype=np.float32)
         self._target_pos = np.clip(self._target_pos + action, 0.0, 1.0)
-        self._target_pos[4] = np.clip(self._target_pos[4], 0.2, 0.825)  # gripper range [0.2, 0.8]
+        self._target_pos[1] = np.clip(self._target_pos[1], *Y_RANGE)
+        self._target_pos[4] = np.clip(self._target_pos[4], *GRIPPER_RANGE)
         self._send_absolute()
 
         print("Sending action took {:.3f} seconds, now dwelling for {:.3f} seconds...".format(
@@ -210,10 +213,12 @@ class CloudGripperEnv(gym.Env):
             if d[3] >= 0.01:
                 rotate(int(float(rot_norm) * 180))
                 self._last_sent_pos[3] = rot_norm
+                # print("rot_norm", rot_norm)
                 time.sleep(0.01)
             if d[4] >= 0.01:
                 move_gripper(float(grip))
                 self._last_sent_pos[4] = grip
+                # print("Grip", grip)
                 time.sleep(0.01)
         else:
             step_action = self.robot.step_action_ws if self.use_ws else self.robot.step_action
@@ -222,8 +227,12 @@ class CloudGripperEnv(gym.Env):
 
         # print(f"Action sent ({'dof_wise' if self.dof_wise else 'step_action'}) in {time.time() - start_time:.3f} seconds")
 
-    def _observe(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Fetch images and state. Returns (top_img_bgr, base_img_rgb, state_array)."""
+    _IMAGE_FETCH_RETRIES = 3
+    _IMAGE_FETCH_RETRY_DELAY = 0.2
+    _DEFAULT_TOP_SHAPE = (720, 1280, 3)
+    _DEFAULT_BASE_SHAPE = (480, 640, 3)
+
+    def _fetch_images_and_state(self) -> tuple[np.ndarray | None, np.ndarray | None, np.ndarray]:
         if self.use_ws:
             if self.use_cur_state:
                 top_img, base_img_raw, state_dict, _ = self.robot.get_all_states_ws()
@@ -240,6 +249,33 @@ class CloudGripperEnv(gym.Env):
                 top_img, _ = self.robot.getImageTop()
                 base_img_raw, _ = self.robot.getImageBase()
                 state = self._target_pos.copy()
+        return top_img, base_img_raw, state
+
+    def _observe(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Fetch images and state. Returns (top_img_bgr, base_img_rgb, state_array)."""
+        top_img = base_img_raw = None
+        for attempt in range(self._IMAGE_FETCH_RETRIES):
+            top_img, base_img_raw, state = self._fetch_images_and_state()
+            if top_img is not None and base_img_raw is not None:
+                break
+            if attempt < self._IMAGE_FETCH_RETRIES - 1:
+                print(f"[{self._robot_name}] image fetch failed, retrying...")
+                time.sleep(self._IMAGE_FETCH_RETRY_DELAY)
+
+        # The robot API occasionally fails to fetch a frame (returns None) on
+        # transient network errors — fall back to the last good frame (or a
+        # blank frame if none has been captured yet) instead of crashing.
+        if top_img is None:
+            top_img = self._last_top_img if self._last_top_img is not None \
+                else np.zeros(self._DEFAULT_TOP_SHAPE, dtype=np.uint8)
+        else:
+            self._last_top_img = top_img
+        if base_img_raw is None:
+            base_img_raw = self._last_base_img if self._last_base_img is not None \
+                else np.zeros(self._DEFAULT_BASE_SHAPE, dtype=np.uint8)
+        else:
+            self._last_base_img = base_img_raw
+
         base_img = cv2.cvtColor(base_img_raw, cv2.COLOR_BGR2RGB)
         return top_img, base_img, state
 
