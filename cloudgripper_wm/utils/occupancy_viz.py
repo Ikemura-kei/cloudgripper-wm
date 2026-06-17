@@ -1,24 +1,26 @@
 """Shared 3D live-view helpers for occupancy heightmaps + gripper fingers.
 
-Used by scripts/debug/gripper_collision_sim.py and SafeCloudGripperWrapper's
+Used by scripts/debug/safety_sim.py and SafeCloudGripperWrapper's
 live_view option.
 """
 
 from __future__ import annotations
 
-import os
-
-import cv2  # noqa: F401  (import first so the QT_QPA fixup below applies)
-
-# cv2 points Qt at its own bundled (incompatible) plugins; drop that before
-# matplotlib's Qt backend initializes, or figure creation fails.
-os.environ.pop("QT_QPA_PLATFORM_PLUGIN_PATH", None)
-
 import numpy as np
-import matplotlib.pyplot as plt
 
+from cloudgripper_wm.envs.constants import WORKSPACE_BOUNDS
 from cloudgripper_wm.utils.occupancy import HeightMapData
 from cloudgripper_wm.utils.get_finger_pos import get_finger_pos
+
+# Height of the translucent wall planes drawn around WORKSPACE_BOUNDS,
+# matching scripts/debug/safety_sim.py's WALL_HEIGHT.
+WALL_HEIGHT = 0.15
+
+# matplotlib (and the cv2/Qt-plugin fixup it requires) is only needed by
+# LiveOccupancyView, and is imported lazily there. Importing it eagerly here
+# would pop QT_QPA_PLATFORM_PLUGIN_PATH for every importer of this module
+# (e.g. SafeCloudGripperWrapper with live_view=False), breaking cv2.imshow
+# elsewhere (e.g. CloudGripperEnv's show_display thread).
 
 
 def pose_to_fingers(pose) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -73,6 +75,14 @@ class LiveOccupancyView:
     """Interactive 3D view of an occupancy heightmap + gripper finger positions."""
 
     def __init__(self, height: float, z_cells: int = 3, grid_cells: int = 25):
+        import os
+
+        # cv2 points Qt at its own bundled (incompatible) plugins; drop that
+        # before matplotlib's Qt backend initializes, or figure creation fails.
+        os.environ.pop("QT_QPA_PLATFORM_PLUGIN_PATH", None)
+        import matplotlib.pyplot as plt
+        self._plt = plt
+
         self.height = height
         self.z_cells = z_cells
         self.grid_cells = grid_cells
@@ -119,8 +129,8 @@ class LiveOccupancyView:
         ax.set_title(title)
 
         self.fig.canvas.draw_idle()
-        plt.pause(0.001)
+        self._plt.pause(0.001)
 
     def close(self) -> None:
-        plt.close(self.fig)
-        plt.ioff()
+        self._plt.close(self.fig)
+        self._plt.ioff()

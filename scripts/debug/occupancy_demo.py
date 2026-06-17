@@ -109,10 +109,10 @@ def visualize(hd: HeightMapData, height: float, trajectories: list,
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    HEIGHT = 0.03    # 3 cm
-    CELL   = 0.005   # 5 mm grid
-
-    img = cv2.imread("./debug_base.jpg")
+    HEIGHT = 0.5
+    CELL   = 0.006
+    img_file = "/home/ikemura/Code/cloudgripper_wm/misc/captures/usy_20260610_144207_base.jpg"
+    img = cv2.imread(img_file)
     if img is not None:
         h, w = img.shape[:2]
         robot = _FakeRobot(w, h, metres_per_px=0.001)
@@ -159,5 +159,5 @@ if __name__ == "__main__":
               f'({(time.time()-t0)*1000:.1f} ms)')
 
     t0 = time.time()
-    visualize(hd, HEIGHT, trajs, save_path="occupancy_demo.png")
+    visualize(hd, HEIGHT, trajs, save_path=img_file.replace(".jpg", "_occupancy_demo.png"))
     print(f"visualization saved in {time.time()-t0:.3f}s → occupancy_demo.png")

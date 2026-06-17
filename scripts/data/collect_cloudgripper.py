@@ -91,9 +91,12 @@ def run(cfg: DictConfig) -> None:
     seed_start = cfg.seed + n_existing
     _save_config(cfg, cfg.output)
 
+    safety = OmegaConf.to_container(cfg.safety, resolve=True) if cfg.get('safety') else None
+
     world = CloudGripperWorld(
         robot_names=list(cfg.robots),
         use_mock=cfg.use_mock,
+        safety=safety,
         **cfg.world,
     )
 

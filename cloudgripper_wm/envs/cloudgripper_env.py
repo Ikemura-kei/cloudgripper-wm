@@ -7,7 +7,7 @@ import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
 
-from cloudgripper_wm.envs.constants import GRIPPER_RANGE, Y_RANGE
+from cloudgripper_wm.envs.constants import GRIPPER_RANGE, X_RANGE, Y_RANGE
 from cloudgripper_wm.envs.robot_pool import RobotPool
 from cloudgripper_wm.tasks import get_task
 from cloudgripper_wm.tasks.base import DEFAULT_HOME_POS, Task
@@ -78,6 +78,10 @@ class CloudGripperEnv(gym.Env):
             self.robot.connect_ws()
             self.robot._ws.settimeout(None)
         self._target_pos: np.ndarray = DEFAULT_HOME_POS.copy()
+        # When False, X_RANGE/Y_RANGE clipping is skipped in step() — used by
+        # SafeCloudGripperWrapper.push_objects_to_center() to reach the full
+        # WORKSPACE_BOUNDS edges when retrieving objects.
+        self._restrict_xy: bool = True
         self._last_sent_pos: np.ndarray = np.full(5, np.inf, dtype=np.float32)
         self._last_top_img: np.ndarray | None = None
         self._last_base_img: np.ndarray | None = None
@@ -112,6 +116,11 @@ class CloudGripperEnv(gym.Env):
 
         time.sleep(self.reset_dwell_time)
 
+        move_z       = self.robot.move_z_ws       if self.use_ws else self.robot.move_z
+        move_z(1.0)
+
+        time.sleep(self.reset_dwell_time)
+
         top_img, base_img, state = self._observe()
         with self._img_lock:
             self._last_top_img = top_img
@@ -126,7 +135,9 @@ class CloudGripperEnv(gym.Env):
         
         action = np.asarray(action, dtype=np.float32)
         self._target_pos = np.clip(self._target_pos + action, 0.0, 1.0)
-        self._target_pos[1] = np.clip(self._target_pos[1], *Y_RANGE)
+        if self._restrict_xy:
+            self._target_pos[0] = np.clip(self._target_pos[0], *X_RANGE)
+            self._target_pos[1] = np.clip(self._target_pos[1], *Y_RANGE)
         self._target_pos[4] = np.clip(self._target_pos[4], *GRIPPER_RANGE)
         self._send_absolute()
 

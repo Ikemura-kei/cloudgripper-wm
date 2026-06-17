@@ -108,6 +108,81 @@ def build_height_map(
     return HeightMapData(hmap=hmap, origin=origin, cell_size=cs)
 
 
+def is_inside_occupancy(point: tuple[float, float, float] | np.ndarray, hmap_data: HeightMapData) -> bool:
+    """Return True if `point` (X, Y, Z) is within an object's footprint and
+    at or below its (assumed) top height.
+
+    Used to catch the case where a finger has already entered an occupied
+    column (e.g. via lateral movement, or because `height` overestimates the
+    real object) — `check_collision(surface="top")` only fires on the
+    initial crossing and won't detect further descent once already inside.
+    """
+    o = np.asarray(hmap_data.origin, float)
+    p = np.asarray(point, float)
+    rows, cols = hmap_data.hmap.shape
+
+    xi = int(round((p[0] - o[0]) / hmap_data.cell_size))
+    yi = int(round((p[1] - o[1]) / hmap_data.cell_size))
+    if not (0 <= xi < cols and 0 <= yi < rows):
+        return False
+
+    top = hmap_data.hmap[yi, xi]
+    return top > 0.0 and p[2] <= top
+
+
+def object_near_wall(
+    point_xy: tuple[float, float] | np.ndarray,
+    hmap_data: HeightMapData,
+    bounds: tuple[float, float],
+    margin: float,
+) -> str | None:
+    """If (x, y) lands on an occupied heightmap cell, find the connected
+    object (via connected-component labeling of the occupancy mask) that
+    cell belongs to. If that object's bounding extent reaches within
+    `margin` of a workspace edge, return which edge (``"x_min"``, ``"x_max"``,
+    ``"y_min"``, ``"y_max"``); otherwise return None.
+
+    Checking the whole connected object — not just the contact cell —
+    matters because an object wider than `margin` can have its near-wall
+    edge already jammed against the wall while the finger contacts it from
+    the far side, well outside the margin band.
+
+    Used to detect an object that has been pushed up against the workspace
+    wall, so further pushes toward that edge can be blocked.
+    """
+    o = np.asarray(hmap_data.origin, float)
+    x, y = float(point_xy[0]), float(point_xy[1])
+    rows, cols = hmap_data.hmap.shape
+
+    xi = int(round((x - o[0]) / hmap_data.cell_size))
+    yi = int(round((y - o[1]) / hmap_data.cell_size))
+    if not (0 <= xi < cols and 0 <= yi < rows):
+        return None
+    if hmap_data.hmap[yi, xi] <= 0.0:
+        return None
+
+    binary = (hmap_data.hmap > 0.0).astype(np.uint8)
+    num_labels, labels = cv2.connectedComponents(binary, connectivity=8)
+    label = labels[yi, xi]
+    ys, xs = np.where(labels == label)
+
+    x_min = o[0] + xs.min() * hmap_data.cell_size
+    x_max = o[0] + (xs.max() + 1) * hmap_data.cell_size
+    y_min = o[1] + ys.min() * hmap_data.cell_size
+    y_max = o[1] + (ys.max() + 1) * hmap_data.cell_size
+
+    lo, hi = bounds
+    if x_min - lo <= margin:
+        return "x_min"
+    if hi - x_max <= margin:
+        return "x_max"
+    if y_min - lo <= margin:
+        return "y_min"
+    if hi - y_max <= margin:
+        return "y_max"
+    return None
+
+
 def check_collision(
     start: tuple[float, float, float] | np.ndarray,
     end:   tuple[float, float, float] | np.ndarray,

@@ -8,17 +8,26 @@ Usage (1 robot):
 Usage (8 robots — identical call site):
     world = CloudGripperWorld(robot_names=["robot1", ..., "robot8"])
     world.collect("data.lance", episodes=100)
+
+Usage (with collision-avoidance safety filter):
+    world = CloudGripperWorld(robot_names=["robot23"], safety={"cell_size": 0.01, "height": 0.35})
+
+`safety`, if set, wraps each env in `SafeCloudGripperWrapper` (with
+`live_view=False`) so collected `"action"` values are the actually-executed
+(post-safety-filter) actions, not the policy's raw output.
 """
 
 from __future__ import annotations
 
 import os
+from functools import partial
 from typing import Any
 
 import stable_worldmodel as swm
 
 import cloudgripper_wm.envs  # triggers gymnasium.register() for all env IDs
 from cloudgripper_wm.envs.robot_pool import RobotPool
+from cloudgripper_wm.envs.safe_cloudgripper_wrapper import SafeCloudGripperWrapper
 
 
 class CloudGripperWorld:
@@ -38,6 +47,7 @@ class CloudGripperWorld:
         use_mock: bool = False,
         dwell_time: float = 0.5,
         max_delta: float = 0.05,
+        safety: dict | None = None,
         **kwargs: Any,
     ) -> None:
         if not use_mock:
@@ -46,6 +56,13 @@ class CloudGripperWorld:
                 raise RuntimeError("Set CLOUDGRIPPER_TOKEN or pass token=")
 
         RobotPool.configure(robot_names)
+
+        extra_wrappers = kwargs.pop("extra_wrappers", [])
+        if safety is not None:
+            extra_wrappers = [
+                *extra_wrappers,
+                partial(SafeCloudGripperWrapper, live_view=False, **safety),
+            ]
 
         self._world = swm.World(
             env_name,
@@ -56,6 +73,7 @@ class CloudGripperWorld:
             use_mock=use_mock,
             dwell_time=dwell_time,
             max_delta=max_delta,
+            extra_wrappers=extra_wrappers,
             **kwargs,
         )
 

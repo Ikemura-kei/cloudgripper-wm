@@ -17,7 +17,7 @@ cloudgripper-wm/
 │   │   ├── __init__.py        # gymnasium.register() for all task env IDs
 │   │   ├── cloudgripper_env.py  # Core Gymnasium env wrapping CloudGripper API
 │   │   ├── safe_cloudgripper_wrapper.py  # SafeCloudGripperWrapper — occupancy-based collision avoidance
-│   │   ├── constants.py       # Shared Y_RANGE / GRIPPER_RANGE clip constants
+│   │   ├── constants.py       # Shared X_RANGE / Y_RANGE / GRIPPER_RANGE clip constants
 │   │   └── robot_pool.py     # Thread-safe singleton assigning robot names to env instances
 │   ├── tasks/
 │   │   ├── __init__.py        # TASK_REGISTRY dict, get_task() factory
@@ -57,7 +57,8 @@ cloudgripper-wm/
 │   │   ├── test_connection.py        # Smoke test: images + base camera undistortion on real hardware
 │   │   ├── teleop.py                 # Interactive teleop (no collision avoidance)
 │   │   ├── teleop_safe.py            # Interactive teleop via SafeCloudGripperWrapper, matplotlib UI
-│   │   ├── gripper_collision_sim.py  # Animate finger trajectories vs. occupancy heightmap
+│   │   ├── safety_sim.py              # Animate finger trajectories vs. synthetic heightmap — collision + wall-jam cases
+│   │   ├── reset_objects.py           # Standalone test for SafeCloudGripperWrapper.push_objects_to_center()
 │   │   ├── occupancy_demo.py         # Build heightmap from debug_base.jpg, save 3D viz
 │   │   └── object_segmentation.py    # Quick HSV-based object mask tuning on debug_base.jpg
 │   └── inspect_data.py        # Visualize collected Lance dataset as video
@@ -228,7 +229,7 @@ class Policy:
 - `Box(-max_delta, max_delta, shape=(5,), dtype=float32)` → `[Δx, Δy, Δz, Δrotation, Δgripper]`
 - **Delta actions, not absolute.** The env maintains an internal `self._target_pos: np.ndarray` of shape `(5,)` representing `[x, y, z, rotation_norm, gripper]`, all in [0, 1].
 - Each step: `self._target_pos = np.clip(self._target_pos + action, 0.0, 1.0)`, then the clipped absolute values are sent to the robot API.
-- After the full [0,1] clip, `y` and `gripper` are further clipped to the ranges defined in `cloudgripper_wm/envs/constants.py` (`Y_RANGE = (0.1, 1.0)`, `GRIPPER_RANGE = (0.0, 1.0)`). `SafeCloudGripperWrapper` applies the same clamps to its candidate position so the two stay in sync.
+- After the full [0,1] clip, `x`, `y`, and `gripper` are further clipped to the ranges defined in `cloudgripper_wm/envs/constants.py` (`X_RANGE = (0.175, 0.825)`, `Y_RANGE = (0.175, 0.825)`, `GRIPPER_RANGE = (0.0, 1.0)`). `SafeCloudGripperWrapper` applies the same clamps to its candidate position so the two stay in sync.
 - `max_delta` is a configurable constructor parameter (default ~0.05–0.1). This caps how far the robot can move per step, producing smooth trajectories.
 - The CloudGripper API only accepts absolute coordinates, so the env is responsible for the delta-to-absolute conversion. The robot API never sees deltas.
 
@@ -296,7 +297,9 @@ world.collect("data/collect.lance", episodes=100)
 world.close()
 ```
 
-Constructor kwargs: `robot_names`, `env_name` (default `"cloudgripper/Gripper-v0"`), `image_shape` (default `(64, 64)`), `max_episode_steps`, `token` (falls back to `CLOUDGRIPPER_TOKEN` env var), `use_mock`, `dwell_time`, `max_delta`. Any extra kwargs are forwarded to `swm.World` / `gym.make`.
+Constructor kwargs: `robot_names`, `env_name` (default `"cloudgripper/Gripper-v0"`), `image_shape` (default `(64, 64)`), `max_episode_steps`, `token` (falls back to `CLOUDGRIPPER_TOKEN` env var), `use_mock`, `dwell_time`, `max_delta`, `safety` (optional dict — see [SafeCloudGripperWrapper (Collision Avoidance)](#safecloudgrippercwrapper-collision-avoidance) below). Any extra kwargs are forwarded to `swm.World` / `gym.make`.
+
+When `safety` is set, `CloudGripperWorld` adds `SafeCloudGripperWrapper(live_view=False, **safety)` as an `extra_wrapper` — applied **outside** `MegaWrapper`, so the recorded `"action"` column reflects the actually-executed (post-safety-filter) action, not the policy's raw output.
 
 ### Lance dataset schema
 
@@ -309,13 +312,51 @@ Collected datasets are stored in Lance format. Each row is one step:
 | `pixels` | bytes | Top camera JPEG, 64×64 after MegaWrapper resize |
 | `pixels_base` | bytes | Base camera JPEG, native 480×640 |
 | `state` | float[5] | `[x, y, z, rot_norm, gripper]` — commanded target pos |
-| `action` | float[5] | `[Δx, Δy, Δz, Δrot, Δgrip]` — delta action taken |
+| `action` | float[5] | `[Δx, Δy, Δz, Δrot, Δgrip]` — delta action taken (post-safety-filter if `SafeCloudGripperWrapper` is enabled) |
 | `reward` | float[1] | Always 0.0 for task-agnostic collection |
 | `terminated` | float[1] | |
 | `truncated` | float[1] | |
 | `id` | float[1] | Episode UUID (from EverythingToInfoWrapper) |
 
 Decode images: `cv2.imdecode(np.frombuffer(row["pixels"], np.uint8), cv2.IMREAD_COLOR)`
+
+## SafeCloudGripperWrapper (Collision Avoidance)
+
+`cloudgripper_wm/envs/safe_cloudgripper_wrapper.py` wraps `CloudGripperEnv` (or a `MegaWrapper`-wrapped env, when used via `CloudGripperWorld(safety=...)`) and blocks actions that would press the gripper down onto an object.
+
+### Pipeline
+
+1. **Heightmap** — after every `reset()`/`step()`, `utils/occupancy.build_height_map()` builds a world-frame occupancy heightmap from the base camera image (`info["pixels_base"]`). Objects are detected via HSV thresholding — **default range assumes GREEN objects** (`hsv_lower=(35,60,40)`, `hsv_upper=(90,255,255)`); other colors are not detected/avoided. Each occupied cell is extruded to a fixed `height` (constructor param, default `0.35`) — this is an *assumed* object height, not measured.
+2. **Finger prediction** — `utils/occupancy_viz.pose_to_fingers(pose)` converts `[x, y, z, rot_norm, gripper]` → left/right finger-tip world positions via `utils/get_finger_pos.get_finger_pos(x, y, z, theta, w_grip)` (note argument order: `theta` before `w_grip`).
+3. **Collision check** (`SafeCloudGripperWrapper._check_collision`), run on every `step()` before forwarding the action:
+   - For each finger, `utils/occupancy.check_collision(start, end, hmap, surface="top")` checks whether the straight-line path from the current to the candidate finger position **crosses** the heightmap's top surface (a sign change in `z - top`). This allows lateral pushes (entering/staying inside a column without crossing top) but blocks descending through it.
+   - **Edge case — already inside the column**: the top-crossing check only fires once, on the initial crossing. If a finger has *already* entered an occupied column (e.g. via a lateral move, or because `height` overestimates the real object so there's a "buffer" zone below the assumed top but above the real surface), subsequent downward steps never cross `top` again and would pass unchecked. `utils/occupancy.is_inside_occupancy(point, hmap)` catches this: if a finger's *current* position is inside an occupied column (`top > 0` and `z <= top`) **and** the candidate position has a lower `z`, the action is blocked too. Lateral and upward moves while inside remain allowed.
+   - **Wall-jam guard**: the workspace has a low wall around its edge (outside the gripper's reach), and an object pushed hard against it can pop out over the wall — also risking gripper damage from sustained contact force. This check only applies when the *candidate* finger position is actually in contact with the object — `is_inside_occupancy(p1, hmap)` (i.e. `(x,y)` over an occupied cell **and** `z <= top`) — so a finger merely flying over an object's footprint at a safe height is never flagged. When in contact, `utils/occupancy.object_near_wall(point_xy, hmap, bounds, margin)` finds the connected occupied component (via `cv2.connectedComponents`) at the finger's candidate `(x, y)` cell and checks whether that *object's full bounding extent* (not just the contact cell) comes within `wall_margin` of a `WORKSPACE_BOUNDS` edge — checking the whole object matters because a wide object can already be jammed against the wall on its far side while the finger contacts it from the near side, well outside the margin band. If an edge is returned, the move is blocked only if the finger is moving toward (or holding at) that edge along the relevant axis — `sign * (p1[axis] - p0[axis]) >= 0`; retreating away from the wall is always allowed. A small jam/gap is fine — only *sustained pushing into* the wall is blocked.
+4. **Enforcement** — if either finger's check fails, the action is replaced with `np.zeros_like(action)` (target position held in place) and a warning is printed. The wrapper's `step()` calls `self.env.step(action)` with this *corrected* action — so when used as an `extra_wrapper` (outside `MegaWrapper`), the dataset's `"action"` column reflects what was actually executed, not the rejected action.
+
+### Constructor kwargs
+
+`SafeCloudGripperWrapper(env, cell_size=0.01, height=0.35, live_view=False, grid_cells=25, wall_margin=0.21, reset_objects_every=10, cooldown_every=10, cooldown_time=30.0, **height_map_kwargs)` — `height_map_kwargs` are forwarded to `build_height_map` (e.g. `hsv_lower`/`hsv_upper`, `dilate_cells`). `wall_margin` is the distance (in `_target_pos`/occupancy world units) from a `WORKSPACE_BOUNDS` edge within which an object is considered "against the wall" for the wall-jam guard. `live_view=True` opens a `LiveOccupancyView` (interactive 3D matplotlib plot) — only intended for single-robot debugging (`scripts/debug/teleop_safe.py`), not parallel data collection. `reset_objects_every` controls the periodic workspace reset — see below; set to `0` to disable. `cooldown_every`/`cooldown_time` control a periodic robot cooldown — see below; set `cooldown_every=0` to disable.
+
+### Qt/cv2 conflict
+
+`utils/occupancy_viz.LiveOccupancyView.__init__` lazily imports matplotlib and pops `QT_QPA_PLATFORM_PLUGIN_PATH` (cv2 and matplotlib ship incompatible bundled Qt plugins) — this only happens when `live_view=True`. Scripts that use both `cv2.imshow` (e.g. `CloudGripperEnv(show_display=True)`) and matplotlib (e.g. `teleop_safe.py`) must do this fixup themselves before importing `matplotlib.pyplot`.
+
+### Workspace reset routine — `push_objects_to_center`
+
+`SafeCloudGripperWrapper.push_objects_to_center(push_amount=0.25, n_sweeps=7, transit_z=0.5, push_z=0.2, dwell_time=1.0, on_step=None)` sweeps the gripper around all four edges of `WORKSPACE_BOUNDS`, pushing any objects near the walls back toward the center. For each side, it visits `n_sweeps` evenly spaced positions along that edge (gripper closed, `rot_norm=0`); at each position it moves to the edge at `transit_z`, descends to `push_z`, pushes `push_amount` inward, then retreats to `transit_z` before moving on. Each of these is a single absolute move via the internal `_move_to()` helper — one `step()` call (one robot move + one dwell) regardless of `max_delta`, since `CloudGripperEnv._send_absolute()` already sends absolute per-axis commands. Collision/wall-jam checks run on the full move's finger trajectory, so this is not weaker than chunking into small steps. A blocked move (e.g. an object already sitting where the gripper would descend) is logged and skipped rather than retried. The optional `on_step(obs, info)` callback fires after every `step()` — used by `reset_objects.py` to drive a live camera view / video recorder.
+
+For the duration of this routine, `CloudGripperEnv._restrict_xy` (an instance flag, default `True`) is temporarily set to `False` so `step()` and the wrapper's collision-check candidate position skip the `X_RANGE`/`Y_RANGE` clamps — edges/pushes need to reach the full `WORKSPACE_BOUNDS` to retrieve objects near the walls. `CloudGripperEnv.dwell_time` is also temporarily overridden to `dwell_time` (default `1.0`s, larger than the typical per-step dwell), since these moves cover larger distances and need more settling time. Both are restored in a `finally` block.
+
+Standalone test: `scripts/debug/reset_objects.py` (`--robot`, `--push-amount`, `--n-sweeps`, `--use-mock`, `--live-view`, etc.). `--live-view` shows both the 3D occupancy/finger view and a top+base camera feed (matplotlib, updated after every move); `--video-dir DIR` (requires `--live-view`) additionally records both views to `camera.mp4` / `occupancy.mp4` via `matplotlib.animation.FFMpegWriter`.
+
+### Periodic workspace reset in `reset()`
+
+`SafeCloudGripperWrapper` tracks an internal `_episode_count`, incremented on every `reset()`. When `_episode_count % reset_objects_every == 0` (default every 10th episode), `reset()` calls `push_objects_to_center()` (with default args) after the normal home-position reset, then calls `self.env.reset(**kwargs)` again to return to home before returning. Set `reset_objects_every=0` to disable. This runs with whatever `live_view`/heightmap settings the wrapper was constructed with, so the same collision/wall-jam checks apply during the periodic reset as during normal stepping.
+
+### Periodic robot cooldown in `reset()`
+
+Independently of the workspace reset above, `reset()` also checks `_episode_count % cooldown_every == 0` (default every 10th episode) and, if true, calls `time.sleep(cooldown_time)` (default `30.0`s) before returning — giving the robot hardware a rest period on a fixed cadence. `cooldown_every` and `cooldown_time` are separate constructor kwargs from `reset_objects_every`/`push_objects_to_center`'s args, so the two periodic behaviors can run on different schedules (or either can be disabled independently by setting its `_every` param to `0`). Both checks use the same `_episode_count`, so with the defaults (`10` and `10`) they coincide on the same episodes.
 
 ## Task System
 
@@ -493,7 +534,7 @@ world = swm.World("cloudgripper/CubePush-v0", num_envs=8, image_shape=(64, 64))
 | `StickyRandomPolicy` | ✅ Done | `policies/sticky_random_policy.py` — action persistence + Gaussian noise |
 | `GeometricTrajectoryPolicy` | ✅ Done | `policies/geometric_trajectory_policy.py` — circle/square/triangle in X-Y, sticky-random on other DoFs |
 | Live display thread | ✅ Done | `CloudGripperEnv(show_display=True)` shows top camera in a background thread via `cv2.imshow` |
-| `SafeCloudGripperWrapper` | ✅ Done | `envs/safe_cloudgripper_wrapper.py` — occupancy-heightmap collision check (`surface="top"`), blocks actions that would collide, optional live 3D view (`scripts/debug/teleop_safe.py`) |
+| `SafeCloudGripperWrapper` | ✅ Done | `envs/safe_cloudgripper_wrapper.py` — occupancy-heightmap collision check (`surface="top"`), blocks actions that would collide, optional live 3D view (`scripts/debug/teleop_safe.py`). **Assumes GREEN objects** (default HSV range in `utils/occupancy.py`); other colors are not detected/avoided. |
 | Tests | ❌ Not written | Test files exist but are empty |
 | Reward & success implementations | ❌ Deferred | Only needed for RL/MPC evaluation |
 

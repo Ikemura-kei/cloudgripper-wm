@@ -8,19 +8,20 @@ hydra:
 
 # --- Output ---
 # Folder that will contain {name}.lance and config.yaml
-output: data/cloudgripper
-output_name: cloudgripper
+output: data/cloudgripper_safe_nogrip
+output_name: cloudgripper_safe_nogrip
 
 # --- Robots ---
+# Safety filter requires per-robot camera calibration (currently only robot23).
 robots:
-  - robot25
+  - robot23
 use_mock: false
 
 # --- World ---
 world:
   image_shape: [180, 320]
   max_episode_steps: 60
-  dwell_time: 0.05
+  dwell_time: 0.075
   reset_dwell_time: 0.1
   max_delta: 0.125
   show_display: false
@@ -29,18 +30,13 @@ world:
   use_ws: false
 
 # --- Safety (collision-avoidance wrapper) ---
-# Set to null to disable. When enabled, recorded "action" values are the
-# actually-executed (post-safety-filter) actions.
-safety: null
-# safety:
-#   cell_size: 0.01
-#   height: 0.35
+safety:
+  cell_size: 0.006
 
 # --- Collection ---
-episodes: 80
+episodes: 1000
 seed: 427
 
 # --- Policy ---
 policy:
-  _target_: cloudgripper_wm.policies.WarmupRandomPolicy
-  n_warmup: 3
+  _target_: cloudgripper_wm.policies.NoGripRandomPolicy
