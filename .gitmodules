@@ -4,3 +4,6 @@
 [submodule "third_party/cloudgripper-api"]
 	path = third_party/cloudgripper-api
 	url = https://github.com/Ikemura-kei/cloudgripper-api-fork.git
+[submodule "third_party/genesis-world"]
+	path = third_party/genesis-world
+	url = https://github.com/Genesis-Embodied-AI/genesis-world.git
