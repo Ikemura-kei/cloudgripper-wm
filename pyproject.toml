@@ -7,7 +7,7 @@ requires-python = ">=3.10"
 dependencies = [
     "cloudgripper-api",
     "datasets>=4.8.5",
-    "genesis",
+    "genesis-world",
     "h5py>=3.16.0",
     "hdf5plugin>=6.0.0",
     "numpy>=2.2.6",
@@ -25,5 +25,5 @@ build-backend = "hatchling.build"
 
 [tool.uv.sources]
 cloudgripper-api = { path = "third_party/cloudgripper-api", editable = true }
-genesis = { path = "third_party/genesis_world", editable = true }
+genesis-world = { path = "third_party/genesis-world", editable = true }
 stable-worldmodel = { path = "third_party/stable-worldmodel", editable = true }
