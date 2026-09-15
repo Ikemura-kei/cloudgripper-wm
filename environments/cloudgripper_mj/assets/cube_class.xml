@@ -1,0 +1,23 @@
+<mujoco model="cube_class">
+    <asset>
+        <!-- mesh is authored in millimeters (30x30x30, local origin at the
+             BOTTOM face, not centered — see cloudgripper_mj_cube.py) but
+             scales to meters when loaded. scale is a placeholder here —
+             modify_mjcf_model() overwrites it every reset to match the
+             freshly-sampled variation_space['cube']['size'], recompiling
+             the model when it changes (a single mesh can't be resized
+             post-compile without a full MjModel rebuild). -->
+        <mesh name="cube" file="mesh/cube.stl" scale="0.001 0.001 0.001"/>
+    </asset>
+
+    <default>
+        <default class="cube">
+            <geom type="mesh" mesh="cube" rgba="0.96 0.26 0.33 1.0" density="1240" solref="0.004 1" contype="3"
+                  group="1"/>
+            <site type="sphere" size=".005" rgba="0 1 0 1" group="5"/>
+        </default>
+    </default>
+
+    <worldbody>
+    </worldbody>
+</mujoco>

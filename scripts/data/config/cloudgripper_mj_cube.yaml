@@ -1,0 +1,13 @@
+defaults:
+  - cloudgripper_mj
+  - _self_
+
+# output
+output: .stable_worldmodel/datasets/
+output_name: cloudgripper_mj_cube
+
+policy:
+  _target_: cloudgripper_wm.policies.HeuristicGraspPolicy
+  min_repeat: 2
+  max_repeat: 5
+  noise_std: 0.1

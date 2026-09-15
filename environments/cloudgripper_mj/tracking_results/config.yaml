@@ -1,0 +1,24 @@
+checkpoint: /home/sean/.stable_worldmodel/checkpoints/lewm_mujoco-26-08-14-11-00-02-fya/weights_epoch_30.pt
+cache_dir: ${hydra:runtime.cwd}/.stable_worldmodel
+stats_dataset: ${hydra:runtime.cwd}/.stable_worldmodel/datasets/tracking.lance
+decoder_checkpoint: /home/sean/.stable_worldmodel/checkpoints/decoder-26-08-15-20-29-15-dcz/decoder_epoch_20.pt
+env:
+  id: cloudgripper_mujoco/Tracking-v0
+  image_shape:
+  - 224
+  - 224
+  height: 224
+  width: 224
+  max_delta: 0.05
+policy:
+  _target_: cloudgripper_wm.policies.StickyRandomPolicy
+  min_repeat: 2
+  max_repeat: 5
+  noise_std: 0.1
+eval:
+  n_episodes: 5
+  n_pred_steps: 30
+  seed: 0
+output:
+  dir: ${hydra:runtime.cwd}/outputs/wm_live_eval
+  fps: 4

@@ -1,0 +1,32 @@
+defaults:
+  - _self_
+  - launcher: local
+
+hydra:
+  job:
+    chdir: false
+
+# output
+output: .stable_worldmodel/datasets/
+output_name: cloudgripper_mj
+
+# collect
+num_envs: 1
+episodes: 10
+seed: 42
+  
+# collect policy
+policy:
+  _target_: cloudgripper_wm.policies.RandomPolicy
+  min_repeat: 2
+  max_repeat: 5
+  noise_std: 0.1
+
+# world
+world:
+  image_shape: [480, 480]
+  height: 480
+  width: 480
+  max_episode_steps: 250
+  max_delta: 0.05   
+

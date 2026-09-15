@@ -1,0 +1,264 @@
+<mujoco>
+  <compiler meshdir="./mesh" balanceinertia="true" inertiafromgeom="true"/>
+  <visual>
+    <headlight active="1"/>
+  </visual>
+  <default>
+    <joint damping="0.1" armature="0.01"/>
+
+    <!-- STANDARD PHYSICAL GEOMS (default) -->
+    <!-- <geom contype="1" conaffinity="1"type="mesh"/> -->
+
+    <!-- VISUAL ONLY GEOMS Class -->
+    <default class="visual_mesh">
+      <geom contype="0" conaffinity="0" group="1"/>
+    </default>
+  </default>
+  
+  <asset>
+    <material name="glass_floor" rgba="1 1 1 0.25" shininess="0.9" specular="0.8" reflectance="0.8"/>
+    <material name="gray_mat" rgba="0.87294 0.95294 0.87294 1"/>
+    <material name="led_light" rgba="1 1 1 1" emission="1.0" specular="0.0" reflectance="0.0"/>
+    <material name="yellow_plastic" rgba="1.0 0.8 0.15 1" specular="0.4" shininess="0.4"/>
+    <material name="black_plastic" rgba="0.0 0.0 0.0 1" specular="0.4" shininess="0.4"/>
+    <material name="seethrough_plastic" rgba="1.0 1.0 1.0 0.3" specular="0.4" shininess="0.4"/>
+    <material name="metal" rgba="0.8 0.8 0.8 1" specular="1.0" shininess="0.9" metallic="1.0" />
+  </asset>
+
+  <actuator>
+    <intvelocity name="x_actuator"             joint="Rail_joint"      ctrlrange="-0.125 0.125" kp="200" forcerange="-100 100" actrange="-0.1 0.1"/>
+    <intvelocity name="y_actuator"             joint="Slider_joint"    ctrlrange="-0.125 0.125" kp="200" forcerange="-100 100" actrange="-0.08 0.08"/>
+    <intvelocity name="z_actuator"             joint="Linear_joint"    ctrlrange="-0.028 0.028" kp="200" forcerange="-100 100" actrange="0.0 0.04"/>
+    <intvelocity name="rotate_actuator"        joint="Rotation_joint"  ctrlrange="-2.209 2.209" kp="200" forcerange="-100 100" actrange="-1.5708 1.5708"/>
+    <intvelocity name="gripper_right_actuator" joint="RightSpur_joint" ctrlrange="-0.736 0.736" kp="200" forcerange="-100 100" actrange="-0.5236 0.5236"/>
+  </actuator>
+
+  <equality>
+    <!-- First define parallel mechanism linkage for the right finger (which is actuated by the servo motor) -->
+    <!-- 1) Let the right finger move by the opposite amount of "SpurGear1_v1" -->
+    <joint name="finger_parallel_right" joint1="RightSpur_joint" joint2="RightFinger_joint" polycoef="0 -1 0 0 0" />
+    
+    <!-- 2) Let the front linkage rotate the same as "SpurGear1_v1" -->
+    <joint name="parallel_link_right_front" joint1="RightSpur_joint" joint2="LinkFrontRight_joint" polycoef="0 -1 0 0 0" />
+
+    <!-- 3) Let the back linkage rotate the same as "SpurGear1_v1" -->
+    <joint name="parallel_link_right_back" joint1="RightSpur_joint" joint2="LinkBackRight_joint" polycoef="0 1 0 0 0" />
+    
+    <!-- 4) Let the left finger move by the opposite amount of "SpurGear2_v1" -->
+    <joint name="finger_parallel_left" joint1="LeftSpur_joint" joint2="LeftFinger_joint" polycoef="0 -1 0 0 0" />
+    
+    <!-- 5) Let the front linkage rotate the same as "SpurGear2_v1" -->
+    <joint name="parallel_link_left_front" joint1="LeftSpur_joint" joint2="LinkFrontLeft_joint" polycoef="0 -1 0 0 0" />
+
+    <!-- 6) Let the back linkage rotate the same as "SpurGear2_v1" -->
+    <joint name="parallel_link_left_back" joint1="LeftSpur_joint" joint2="LinkBackLeft_joint" polycoef="0 1 0 0 0" />
+
+    <!-- 7) Let "SpurGear2_v1" rotate opposite to "SpurGear1_v1" (Gear connection)-->
+    <joint name="spur_gear_mechanism" joint1="RightSpur_joint" joint2="LeftSpur_joint" polycoef="0 -1 0 0 0" />
+</equality>
+
+
+  <worldbody>
+    
+    <body name="Ground_plate" pos="0.0 0.0 0.0" quat="1.0 0.0 0.0 0.0" >
+      <geom type="mesh" name="Ground_plate geom" mesh="Ground_plate" material="glass_floor"  />
+    </body>
+
+    <!-- BOX  -->
+    <body name="wall_front" pos="-0.16111600399017334 -0.0015206336975097656 0.0425376296043396" quat="0.5000000596046448 0.5 -0.4999999403953552 -0.5" >
+      <geom type="mesh" name="wall_front geom" mesh="wall_front" material="gray_mat" />
+    </body>
+    <body name="wall_back" pos="0.18656843900680542 -0.0015206336975097656 0.0425376296043396" quat="0.5000000596046448 0.5 -0.4999999403953552 -0.5" >
+      <geom type="mesh" name="wall_back geom" mesh="wall_back" material="gray_mat" />
+    </body>
+    <body name="wall_right" pos="-0.00011800229549407959 0.13448134064674377 0.0425376296043396" quat="0.7071068286895752 0.7071067690849304 -1.5454309831852697e-08 -1.5454309831852697e-08" >
+      <geom type="mesh" name="wall_right geom" mesh="wall_right" material="gray_mat" />
+    </body>
+    <body name="wall_left" pos="-0.00011804699897766113 -0.13751864433288574 0.0425376296043396" quat="0.7071068286895752 0.7071067690849304 -1.5454308055495858e-08 -1.5454311608209537e-08" >
+      <geom type="mesh" name="wall_left geom" mesh="wall_left" material="gray_mat" />
+    </body>
+    <body name="wall_top" pos="-0.00011800229549407959 -0.0015206634998321533 0.2546866536140442" quat="6.883879422048267e-08 -0.7071068286895752 0.7071067690849304 -3.7931361163145993e-08" >
+      <geom type="mesh" name="wall_top geom" mesh="wall_top" material="gray_mat" />
+    </body>
+
+    <!-- LIGHTS -->
+    <body name="wall_right_light_upper" pos="-0.00011800229549407959 0.1334783434867859 0.0985376387834549" quat="0.7071068286895752 0.7071067690849304 -1.5454309831852697e-08 -1.5454309831852697e-08" >
+      <geom type="mesh" name="wall_right_light_upper geom" mesh="wall_right_light_upper" material="led_light"/>
+      <light name="led_right_upper1" pos="0 0 0" dir="0 0 1" diffuse="1.5 1.5 1.5" attenuation="1 0.05 0.005" castshadow="false" />
+      <light name="led_right_upper2" pos="0.12 0 0" dir="0 0 1" diffuse="1.5 1.5 1.5" attenuation="1 0.05 0.005" castshadow="false" />
+      <light name="led_right_upper3" pos="-0.12 0 0" dir="0 0 1" diffuse="1.5 1.5 1.5" attenuation="1 0.05 0.005" castshadow="false" />
+    </body>
+    <body name="wall_right_light_lower" pos="-0.00011800229549407959 0.1334783434867859 0.05853763222694397" quat="0.7071068286895752 0.7071067690849304 -1.5454309831852697e-08 -1.5454309831852697e-08" >
+      <geom type="mesh" name="wall_right_light_lower geom" mesh="wall_right_light_lower" material="led_light"/>
+      <light name="led_right_lower1" pos="0 0 0" dir="0 0 1" diffuse="1.5 1.5 1.5" attenuation="1 0.05 0.005" castshadow="false" />
+      <light name="led_right_lower2" pos="0.12 0 0" dir="0 0 1" diffuse="1.5 1.5 1.5" attenuation="1 0.05 0.005" castshadow="false" />
+      <light name="led_right_lower3" pos="-0.12 0 0" dir="0 0 1" diffuse="1.5 1.5 1.5" attenuation="1 0.05 0.005" castshadow="false" />
+    </body>
+    <body name="wall_left_light_upper" pos="-0.00011800229549407959 -0.13451865315437317 0.0985376387834549" quat="0.7071068286895752 0.7071067690849304 -1.5454309831852697e-08 -1.5454309831852697e-08" >
+      <geom type="mesh" name="wall_left_light_upper geom" mesh="wall_left_light_upper" material="led_light"/>
+      <light name="led_left_upper1" pos="0 0 0" diffuse="1.5 1.5 1.5"  attenuation="1 0.05 0.005" castshadow="false" />
+      <light name="led_left_upper2" pos="0.12 0 0" diffuse="1.5 1.5 1.5" attenuation="1 0.05 0.005" castshadow="false" />
+      <light name="led_left_upper3" pos="-0.12 0 0" diffuse="1.5 1.5 1.5" attenuation="1 0.05 0.005" castshadow="false" />
+    </body>
+    <body name="wall_left_light_lower" pos="-0.00011800229549407959 -0.13451865315437317 0.05853763222694397" quat="0.7071068286895752 0.7071067690849304 -1.5454309831852697e-08 -1.5454309831852697e-08" >
+      <geom type="mesh" name="wall_left_light_lower geom" mesh="wall_left_light_lower" material="led_light"  />
+      <light name="led_left_lower1" pos="0 0 0" diffuse="1.5 1.5 1.5" attenuation="1 0.05 0.005" castshadow="false" />
+      <light name="led_left_lower2" pos="0.12 0 0" diffuse="1.5 1.5 1.5" attenuation="1 0.05 0.005" castshadow="false" />
+      <light name="led_left_lower3" pos="-0.12 0 0" diffuse="1.5 1.5 1.5" attenuation="1 0.05 0.005" castshadow="false" />
+    </body>
+
+    <!-- ===== -->
+    <!-- FRAME -->
+    <!-- ===== -->
+    <body name="Frame" pos="0.0 0.0 0.0" quat="1.0 0.0 0.0 0.0" >
+      <geom class="visual_mesh" type="mesh" name="Frame geom" mesh="Frame" material="metal" />
+    </body>
+        
+    <!-- ========= -->
+    <!-- ROBOT ARM -->
+    <!-- ========= -->
+
+
+    <!-- MOVE IN X -->
+    <body name="Rail_slider" pos="0.0 -0.12101864814758301 0.13483764231204987" quat="1.0 0.0 0.0 0.0" >
+      <geom class="visual_mesh" type="mesh" name="Rail_slider geom" mesh="Rail_slider" />
+      <joint type="slide" name="Rail_joint" pos="2.9802322387695312e-08 1.862645149230957e-09 0.0" axis="1.0 0.0 8.940696716308594e-08" limited="true" range="-0.1 0.1" damping="10"/>
+      
+
+      <!-- MOVE IN Y -->      
+      <body name="Slider" pos="-0.000807054340839386 0.12101899832487106 0.014549702405929565" quat="1.0 0.0 0.0 0.0" >
+        <geom class="visual_mesh" type="mesh" name="Slider geom" mesh="Slider" />
+        <joint type="slide" name="Slider_joint" pos="-1.2665987014770508e-07 4.023313522338867e-07 2.980232238769531e-07" axis="0.0 1.0 8.940696716308594e-08" limited="true" range="-0.08 0.08" damping="10"/>
+      
+        <body name="Arm_holder" pos="-0.003224477171897888 -0.004773728549480438 0.0033999085426330566" quat="0.70710688829422 0.0 0.0 0.7071066498756409" >
+          <geom class="visual_mesh" type="mesh" name="Arm_holder geom" mesh="Arm_holder" material="black_plastic" />
+      
+
+          <!-- MOVE IN Z -->      
+          <body name="Arm_linear_gear" pos="0.010907754302024841 0.01390993595123291 -0.01373445987701416" quat="0.7071068286895752 -2.0097191597533148e-14 0.7071067690849304 2.0097189903467254e-14" gravcomp="1">
+            <geom class="visual_mesh" type="mesh" name="Arm_linear_gear geom" mesh="Arm_linear_gear" material="yellow_plastic" />
+            <joint type="slide" name="Linear_joint" pos="2.2075089134432346e-07 -2.0116567611694336e-07 -4.3213367462158203e-07" axis="1.0 0.0 8.940696716308594e-08" limited="true" range="0.0 0.04" damping="10"/>
+            
+            <body name="Arm_rotation_base" pos="0.035899024456739426 0.003044992685317993 0.0035235583782196045" quat="1.0 -2.984670345075602e-14 3.7748932868453267e-08 -3.774895773744902e-08" >
+              <geom class="visual_mesh" type="mesh" name="Arm_rotation_base geom" mesh="Arm_rotation_base" material="black_plastic"  />
+              
+
+              <!-- Z ROTATION -->
+              <body name="Arm_grip_base" pos="0.003450013929978013 7.450580596923828e-09 -0.0026549994945526123" quat="1.0 5.960456661568969e-08 1.4823076576950256e-21 5.960464477539063e-08" >
+                <geom class="visual_mesh" type="mesh" name="Arm_grip_base geom" mesh="Arm_grip_base" material="black_plastic" />
+                <joint type="hinge" name="Rotation_joint" pos="-0.0034499510657042265 -0.0001276358962059021 -1.4901161193847656e-08" axis="-0.9999999403953552 1.4901161193847656e-07 -1.4210854715202004e-14" limited="true" range="-90 90" damping="10"/>
+                
+
+                <!-- FINGER JOINTS -->
+                <body name="SpurGear1_v1" pos="0.01251694094389677 -0.006352581083774567 0.0014251470565795898" quat="0.9238795638084412 -2.6155217369705497e-07 -4.565666529288137e-07 -0.3826833963394165" >
+                  <geom class="visual_mesh" type="mesh" name="SpurGear1_v1 geom" mesh="SpurGear1_v1" material="seethrough_plastic" />
+                  <joint type="hinge" name="RightSpur_joint" pos="-2.9802322387695312e-08 -1.4901161193847656e-08 0.0" axis="8.344650268554688e-07 2.2351741790771484e-07 1.0" limited="true" range="-30 30" damping="10"/>
+      
+                  <body name="Arm_grip_finger_right" pos="0.01572834700345993 -0.00017420947551727295 -1.043081283569336e-07" quat="0.8362867832183838 1.0935525551758474e-06 9.506068181508454e-07 0.5482922792434692" >
+                    <geom type="mesh" name="Arm_grip_finger_right geom" mesh="Arm_grip_finger_right" material="yellow_plastic"  />
+                    <joint type="hinge" name="RightFinger_joint"  pos="4.470348358154297e-08 -1.4901161193847656e-08 -4.470348358154297e-08" axis="-5.960464477539063e-08 2.205371856689453e-06 0.9999998807907104"  />
+                    
+                    <site name="right_finger_site" pos="0.02460101805627346 -0.002549027092754841 -0.0022484585642814636" size="0.001"  />
+                  </body>
+      
+                </body>
+      
+                <body name="SpurGear2_v1" pos="0.012516822665929794 0.006750121712684631 0.0014250725507736206" quat="0.9238793253898621 2.3730004099957805e-14 -3.4822815564439225e-07 0.3826839327812195" >
+                  <geom class="visual_mesh" type="mesh" name="SpurGear2_v1 geom" mesh="SpurGear2_v1" material="seethrough_plastic" />
+                  <joint type="hinge" name="LeftSpur_joint" pos="2.2351741790771484e-08 -2.9802322387695312e-08 1.4901161193847656e-08" axis="1.043081283569336e-06 8.940696716308594e-08 1.0"  />
+      
+                  <body name="Arm_grip_finger_left" pos="0.015484895557165146 -0.00023505091667175293 -4.470348358154297e-08" quat="0.838670551776886 -1.1127038987979176e-06 5.883190397071303e-07 -0.5446390509605408" >
+                    <geom type="mesh" name="Arm_grip_finger_left geom" mesh="Arm_grip_finger_left" material="yellow_plastic" />
+                    <joint type="hinge" name="LeftFinger_joint"  pos="-1.6763806343078613e-08 -3.725290298461914e-08 -2.9802322387695312e-08" axis="3.8743019104003906e-07 -1.4901161193847656e-06 1.0"  />
+                    
+                    <site name="left_finger_site" pos="0.024601008743047714 0.0025490252301096916 -0.0022484585642814636" size="0.001"  />
+                  </body>
+      
+                </body>
+
+
+                <!-- LINK JOINTS -->
+                <body name="Arm_grip_link_back_left" pos="0.022716935724020004 0.0026197880506515503 -0.006424814462661743" quat="0.9238795042037964 3.854725605378917e-07 -4.6227654593167244e-07 0.3826834559440613" >
+                  <geom class="visual_mesh" type="mesh" name="Arm_grip_link_back_left geom" mesh="Arm_grip_link_back_left" material="yellow_plastic"  />
+                  <joint type="hinge" name="LinkBackLeft_joint" axis="0 0 1"/>
+                </body>
+      
+                <body name="Arm_grip_link_back_right" pos="0.022716935724020004 -0.0026199668645858765 -0.006424814462661743" quat="0.9238795638084412 -2.6155217369705497e-07 -4.565666529288137e-07 -0.3826833963394165" >
+                  <geom class="visual_mesh" type="mesh" name="Arm_grip_link_back_right geom" mesh="Arm_grip_link_back_right" material="yellow_plastic"  />
+                  <joint type="hinge" name="LinkBackRight_joint" axis="0 0 1"/>
+                </body>
+      
+                <body name="Arm_grip_link_front_left" pos="0.022716891020536423 0.002619914710521698 0.0014250576496124268" quat="4.01961642637616e-07 0.9238795042037964 0.38268351554870605 -4.6162665512383683e-07" >
+                  <geom class="visual_mesh" type="mesh" name="Arm_grip_link_front_left geom" mesh="Arm_grip_link_front_left" material="seethrough_plastic" />
+                  <joint type="hinge" name="LinkFrontLeft_joint" axis="0 0 1"/>
+                </body>
+      
+                <body name="Arm_grip_link_front_right" pos="0.022716891020536423 -0.0026198402047157288 0.0014250576496124268" quat="2.9894636099925265e-07 -0.9238795638084412 0.3826833963394165 5.244348812993849e-07" >
+                  <geom class="visual_mesh" type="mesh" name="Arm_grip_link_front_right geom" mesh="Arm_grip_link_front_right" material="seethrough_plastic" />
+                  <joint type="hinge" name="LinkFrontRight_joint" axis="0 0 1"/>
+                </body>
+      
+                
+                <body name="Servo_gripper" pos="0.01251694094389677 -0.006352700293064117 -0.0033443868160247803" quat="0.5 0.5 0.4999999701976776 -0.5" >
+                  <geom class="visual_mesh" type="mesh" name="Servo_gripper geom" mesh="Arm" material="black_plastic" />
+                </body>
+      
+              </body>
+      
+              <body name="Servo_rotation" pos="-0.0021609885152429342 -2.384185791015625e-07 -0.0026549994945526123" quat="7.549790126404332e-08 3.5527107141851855e-15 -1.5893297344860002e-08 -1.0" >
+                <geom class="visual_mesh" type="mesh" name="Servo_rotation geom" mesh="servo_rot" material="black_plastic" />
+              </body>
+      
+            </body>
+            
+          </body>
+      
+          <body name="Servo_linear" pos="-0.0032277703285217285 0.029476061463356018 0.027632176876068115" quat="7.549790126404332e-08 2.8421719594799374e-14 -1.0 -3.249066597363348e-14" >
+            <geom class="visual_mesh" type="mesh" name="Servo_linear geom" mesh="servo_lin" material="black_plastic" />
+      
+            <body name="Arm_linear_pinion_gear" pos="-0.016540467739105225 3.725290298461914e-08 0.020041828975081444" quat="0.7071069478988647 -6.02915883451266e-14 -0.7071065902709961 -6.029155446380871e-14" >
+              <geom class="visual_mesh" type="mesh" name="Arm_linear_pinion_gear geom" mesh="Arm_linear_pinion_gear" material="yellow_plastic"  />
+            </body>
+      
+          </body>
+      
+        </body>
+            
+      </body>
+    
+    </body>
+    <camera name="Camera_bottom" pos="0.011877432465553284 -0.01152026653289795 -0.1274629384279251" quat="0 1 1 0" fovy="90" />
+    <camera name="Camera_main" pos="0.14519381523132324 -0.0004741400480270386 0.12123201787471771" quat="0.607417 0.361999 0.361999 0.607417" fovy="90" />
+  </worldbody>
+  <asset>
+    <mesh name="Frame" file="Frame.stl"/>
+    <mesh name="Rail_slider" file="Rail_slider.stl"/>
+    <mesh name="Slider" file="Slider.stl"/>
+    <mesh name="Arm_holder" file="Arm_holder.stl"/>
+    <mesh name="Arm_linear_gear" file="Arm_linear_gear.stl"/>
+    <mesh name="Arm_rotation_base" file="Arm_rotation_base.stl"/>
+    <mesh name="Arm_grip_base" file="Arm_grip_base.stl"/>
+    <mesh name="Arm_grip_link_back_left" file="Arm_grip_link_back_left.stl"/>
+    <mesh name="Arm_grip_link_back_right" file="Arm_grip_link_back_right.stl"/>
+    <mesh name="Arm_grip_link_front_left" file="Arm_grip_link_front_left.stl"/>
+    <mesh name="Arm_grip_link_front_right" file="Arm_grip_link_front_right.stl"/>
+    <mesh name="Arm" file="Arm.stl"/>
+    <mesh name="SpurGear1_v1" file="SpurGear1_v1.stl"/>
+    <mesh name="Arm_grip_finger_right" file="Arm_grip_finger_right.stl"/>
+    <mesh name="SpurGear2_v1" file="SpurGear2_v1.stl"/>
+    <mesh name="Arm_grip_finger_left" file="Arm_grip_finger_left.stl"/>
+    <mesh name="servo_rot" file="servo_rot.stl"/>
+    <mesh name="servo_lin" file="servo_lin.stl"/>
+    <mesh name="Arm_linear_pinion_gear" file="Arm_linear_pinion_gear.stl"/>
+    <mesh name="Ground_plate" file="Ground_plate.stl"/>
+    <mesh name="wall_front" file="wall_front.stl"/>
+    <mesh name="wall_back" file="wall_back.stl"/>
+    <mesh name="wall_right" file="wall_right.stl"/>
+    <mesh name="wall_left" file="wall_left.stl"/>
+    <mesh name="wall_top" file="wall_top.stl"/>
+    <mesh name="wall_right_light_upper" file="wall_right_light_upper.stl"/>
+    <mesh name="wall_right_light_lower" file="wall_right_light_lower.stl"/>
+    <mesh name="wall_left_light_upper" file="wall_left_light_upper.stl"/>
+    <mesh name="wall_left_light_lower" file="wall_left_light_lower.stl"/>
+  </asset>
+</mujoco>

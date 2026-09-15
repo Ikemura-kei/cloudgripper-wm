@@ -9,6 +9,7 @@ dependencies = [
     "datasets>=4.8.5",
     "h5py>=3.16.0",
     "hdf5plugin>=6.0.0",
+    "imageio[ffmpeg]>=2.37.3",
     "matplotlib>=3.10.9",
     "numpy>=2.2.6",
     "ogbench",
@@ -16,7 +17,7 @@ dependencies = [
     "pybase64>=1.4.3",
     "requests>=2.34.2",
     "scikit-learn>=1.7.2",
-    "stable-worldmodel[train]",
+    "stable-worldmodel[env,train]",
     "websocket-client>=1.0.0",
 ]
 
