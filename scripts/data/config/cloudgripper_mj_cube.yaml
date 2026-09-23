@@ -11,3 +11,11 @@ policy:
   min_repeat: 2
   max_repeat: 5
   noise_std: 0.1
+
+# Pick-and-place needs the full approach->...->done phase sequence to
+# complete — measured 369-412 steps end-to-end (grasp alone, slowed by
+# grasp_slowdown_factor, takes 120-168 steps), so the base 250 was
+# cutting episodes off mid-grasp/lift/transit, before ever reaching
+# "place" — matches the truncated-before-placing videos.
+world:
+  max_episode_steps: 500

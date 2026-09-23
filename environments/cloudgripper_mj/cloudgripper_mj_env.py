@@ -39,6 +39,7 @@ class CloudgripperMuJoCoEnv(CustomMuJoCoEnv):
         "metal": np.array([0.8, 0.8, 0.8]),
     }
     light_intensity: float = 1.5
+    z_ws = (0.005, 0.03)
 
     # Identifiers of default model
     main_camera: str = "Camera_main"
@@ -131,22 +132,20 @@ class CloudgripperMuJoCoEnv(CustomMuJoCoEnv):
     def __init__(
         self,
         mode: str = "data_collection",
-        max_delta: float = 0.05,
-        step_threshold: float = 0.01,
         physics_timestep: float = 0.002,
         control_timestep: float = 0.05,
+        x_ws: tuple[float, float] = (-0.07, 0.07),
+        y_ws: tuple[float, float] = (-0.07, 0.07),
         **kwargs,
     ):
-        """Initialize the wrapper for Cloudgripper MuJoCo model. 
+        """Initialize the wrapper for Cloudgripper MuJoCo model.
 
         Args:
             mode: Environment mode (data_collection or task)
-            max_delta: Sampling range of action_space for all five joints
-            step_threshold: Threshold for moving to a new position for all five joints.
-                Mirrors real cloudgripper robot to only actuate joints if the relative
-                distance between current and target state exceeds the threshold.
             physics_timestep: Physics timestep.
             control_timestep: Control timestep.
+            x_ws: workspace dimension in x direction (low, high). 
+            y_ws: workspace dimension in y direction (low, high).
         """
         super().__init__(
             physics_timestep=physics_timestep,
@@ -155,11 +154,10 @@ class CloudgripperMuJoCoEnv(CustomMuJoCoEnv):
         )
 
         self._mode: str = mode
-        self._max_delta:float = max_delta
-        self._step_thresh: float = step_threshold
-        self._current_pos:np.ndarray = self.initial_pose.copy()
+        self.x_ws = x_ws
+        self.y_ws = y_ws
         self._target_pos: np.ndarray = self.initial_pose.copy()
-        
+
 
     def build_mjcf_model(self) -> mjcf.RootElement:
         """Loads the default cloudgripper mujoco environment.
@@ -179,13 +177,13 @@ class CloudgripperMuJoCoEnv(CustomMuJoCoEnv):
 
         ______________________
         |                    |
-        |                    |
-        |                    |
-        |             y      |
+        |          y         |
+        |         ^          |
+        |         |   x      |
         |          -->       |
-        |         |          |
-        |         v          |
-        |           x        |
+        |                    |
+        |                    |
+        |                    |
         |                    |
         |________cam_________|
                 (main)
@@ -250,15 +248,112 @@ class CloudgripperMuJoCoEnv(CustomMuJoCoEnv):
         ]
 
         # fingertip site ids, for get_tcp_world_pos()/solve_tcp_ik()
-        self._finger_site_ids = [ 
+        self._finger_site_ids = [
             mujoco.mj_name2id(
                 self.model, mujoco.mjtObj.mjOBJ_SITE, site_name
             )
             for site_name in self.finger_site_names
         ]
 
+        # placeholders so set_active_joints (used by both calibration
+        # steps below) can resolve _actuation_range() before the real,
+        # corrected values exist
+        self._x_actuation_range = self.x_ws
+        self._y_actuation_range = self.y_ws
+
+        self._calibrate_z_actuation_range()
+        self._calibrate_xy_actuation_range()
+
         self.post_compilation_objects()
-        
+
+    def _calibrate_z_actuation_range(self) -> None:
+        """Converts self.z_ws (fingertip height above the ground plate,
+        world z=0 — see class attribute docstring) into the Linear_joint
+        qpos range that achieves it, since the joint's own local qpos=0 is not at the
+        ground plate (Arm_linear_gear sits well above it).
+
+         Measured with the gripper closed (grip_norm=1) — the sim's
+         parallel-jaw linkage moves the fingertip's own world height by
+         over a centimeter between open/closed, and only the closed
+         pose comes close to reaching the real robot's measured low
+         point (see z_ws's docstring) — an open-gripper reference can't
+         get anywhere near it. rot_norm doesn't affect fingertip height
+         (Rotation_joint's axis is vertical), so it's arbitrary here.
+
+         qpos = tip_z_at_qpos0 - desired_world_z, clipped to
+         Linear_joint's own mechanical range — if z_ws's low point isn't
+         physically reachable (as with the default 5mm target, ~2.7mm
+         short on this rig), the clip means z_norm=0 lands at the
+         closest achievable height instead of commanding an unreachable
+         target.
+        """
+        joint_range = self.model.joint('Linear_joint').range
+        adr = self._active_joint_adrs[self.joint_names.index('Linear_joint')]
+
+        # placeholder so set_active_joints (called below) can resolve
+        # _actuation_range('Linear_joint') before the real value exists
+        self._z_actuation_range = tuple(joint_range)
+
+        qpos_backup = self.data.qpos.copy()
+        try:
+            self.set_active_joints([0.5, 0.5, 0.0, 0.5, 1.0])
+            self.data.qpos[adr] = joint_range[0]
+            mujoco.mj_forward(self.model, self.data)
+            tip_z_at_qpos0 = float(self.get_tcp_world_pos()[2])
+        finally:
+            self.data.qpos[:] = qpos_backup
+            mujoco.mj_forward(self.model, self.data)
+
+        qpos_lo = np.clip(tip_z_at_qpos0 - self.z_ws[0], *joint_range)
+        qpos_hi = np.clip(tip_z_at_qpos0 - self.z_ws[1], *joint_range)
+        self._z_actuation_range = (float(qpos_lo), float(qpos_hi))
+
+    def _calibrate_xy_actuation_range(self) -> None:
+        """Corrects self.x_ws/y_ws for the fixed offset between Rail_joint/
+        Slider_joint's own qpos=0 and where the TCP actually sits there.
+
+         Unlike Z (where the offset is huge, ~10cm), x/y's Rail_slider/
+         Slider bodies sit near world origin — but the TCP is further out
+         along the arm (through Arm_holder/Arm_linear_gear/.../fingers),
+         which adds a fixed ~21mm (x) / ~7mm (y) offset that's easy to
+         miss by checking only the rail body's own position. Measured
+         nearly constant across Rotation_joint's full range (21-23mm
+         radius, <2mm variation) — a single fixed correction accounts
+         for nearly all of it. Without this, x_ws/y_ws described where
+         the RAIL goes, not where the TCP (and therefore cube spawn/
+         goal positions sampled from the same box) actually reaches —
+         cubes near the box edge could be unreachable, or only reachable
+         off-center, exactly the "horizontal offset" grasp/total-miss
+         failures this was diagnosed from.
+
+         Measured with the gripper open, rot_norm centered (0.5) — x/y
+         offset barely depends on rotation (see above) or grip.
+        """
+        rail_adr = self._active_joint_adrs[self.joint_names.index('Rail_joint')]
+        slider_adr = self._active_joint_adrs[self.joint_names.index('Slider_joint')]
+
+        qpos_backup = self.data.qpos.copy()
+        try:
+            self.set_active_joints([0.5, 0.5, 0.0, 0.5, 0.0])
+            self.data.qpos[rail_adr] = 0.0
+            self.data.qpos[slider_adr] = 0.0
+            mujoco.mj_forward(self.model, self.data)
+            tcp_xy_at_qpos0 = self.get_tcp_world_pos()[:2].copy()
+        finally:
+            self.data.qpos[:] = qpos_backup
+            mujoco.mj_forward(self.model, self.data)
+
+        offset_x, offset_y = tcp_xy_at_qpos0
+        rail_range = self.model.joint('Rail_joint').range
+        slider_range = self.model.joint('Slider_joint').range
+        self._x_actuation_range = (
+            float(np.clip(self.x_ws[0] - offset_x, *rail_range)),
+            float(np.clip(self.x_ws[1] - offset_x, *rail_range)),
+        )
+        self._y_actuation_range = (
+            float(np.clip(self.y_ws[0] - offset_y, *slider_range)),
+            float(np.clip(self.y_ws[1] - offset_y, *slider_range)),
+        )
 
     def post_compilation_objects(self) -> None:
         """Use to store information of objects.
@@ -271,7 +366,7 @@ class CloudgripperMuJoCoEnv(CustomMuJoCoEnv):
         Note: camera observations are handled via render function.
         """
         return {
-            "state": self._current_pos.astype(np.float32)
+            "state": self._target_pos.astype(np.float32)
         }
 
     def compute_reward(self) -> float:
@@ -292,11 +387,18 @@ class CloudgripperMuJoCoEnv(CustomMuJoCoEnv):
 
     @property
     def action_space(self):
-        """Actions are delta actions by default.
+        """Actions are absolute normalized [0, 1] targets for
+        [x, y, z, rot, grip] — mirrors the real cloudgripper robot's
+        move_xy/move_z/rotate/move_gripper API (absolute positioning),
+        not the step_forward()-style discrete/delta stepping. x, y, z
+        are normalized against the shared workspace box (self.x_ws/
+        y_ws/z_ws — see _actuation_range()), the same box cube spawn/
+        goal positions are sampled from; rot/grip keep their joint's own
+        mechanical range.
         """
         return swm_spaces.Box(
-            low=-self._max_delta,
-            high=self._max_delta,
+            low=0.0,
+            high=1.0,
             shape=(5,),
             dtype=np.float32,
         )
@@ -307,6 +409,30 @@ class CloudgripperMuJoCoEnv(CustomMuJoCoEnv):
         """
         l_lim, u_lim = range
         return (u_lim - l_lim) * val + l_lim
+
+    def _actuation_range(self, joint_id: str) -> tuple[float, float]:
+        """Normalization bounds (mj units) for a joint's absolute [0, 1] target.
+
+         x/y/z all map into the shared workspace box (self.x_ws/y_ws/
+         z_ws, world-frame, centered on the ground plate) — the same
+         box cube spawn/goal positions are sampled from (see
+         CloudgripperMuJoCoCube) — but via calibrated qpos ranges
+         (self._x_actuation_range/_y_actuation_range/_z_actuation_range,
+         see _calibrate_xy_actuation_range()/_calibrate_z_actuation_range()),
+         not the raw x_ws/y_ws/z_ws values directly: each joint's own
+         qpos=0 isn't at the TCP's world-frame origin (obviously so for
+         z — Linear_joint's carriage sits ~10cm above the ground plate —
+         but x/y have a smaller, easy-to-miss fixed offset too, ~21mm/
+         7mm, from the arm's reach past the rail/slider bodies to the
+         fingertips), so the calibration corrects for it. rot/grip
+         aren't spatial, so they keep the joint's own mechanical range
+         unchanged.
+        """
+        return {
+            'Rail_joint': self._x_actuation_range,
+            'Slider_joint': self._y_actuation_range,
+            'Linear_joint': self._z_actuation_range,
+        }.get(joint_id, self.model.joint(joint_id).range)
 
     def set_active_joints(self, values: np.ndarray) -> None:
         """Controls active joints and solves kinematics for stable configuration.
@@ -326,7 +452,7 @@ class CloudgripperMuJoCoEnv(CustomMuJoCoEnv):
             values: normalized [0, 1] target for each of self.joint_namesW.
         """
         for val, joint_id, adr in zip(values, self.joint_names, self._active_joint_adrs):
-            self.data.qpos[adr] = self.unnormalize(val, self.model.joint(joint_id).range)
+            self.data.qpos[adr] = self.unnormalize(val, self._actuation_range(joint_id))
 
         # n^2 passes to ensure all passive joints move (e.g. if not ordered in xml) 
         for _ in range(self.model.neq):
@@ -361,6 +487,13 @@ class CloudgripperMuJoCoEnv(CustomMuJoCoEnv):
 
         return (right + left) / 2.0
 
+    def finger_separation(self) -> float:
+        """Current distance between the two fingertip sites (meters)."""
+        right, left = (
+            self.data.site_xpos[sid] for sid in self._finger_site_ids
+        )
+        return float(np.linalg.norm(right - left))
+
     def solve_tcp_ik(
         self,
         target_xyz_world: np.ndarray,
@@ -391,7 +524,7 @@ class CloudgripperMuJoCoEnv(CustomMuJoCoEnv):
         """
         target = np.asarray(target_xyz_world, dtype=float)
         guess = np.array(
-            self._current_pos[:3] if x0 is None else x0, dtype=float
+            self._target_pos[:3] if x0 is None else x0, dtype=float
         )
 
         qpos_backup = self.data.qpos.copy()
@@ -447,72 +580,66 @@ class CloudgripperMuJoCoEnv(CustomMuJoCoEnv):
             normalized target state of the robot
 
         Solves the (x, y, z) via solve_tcp_ik() and hands it to the same
-        _target_pos that set_control() already drives toward at the real
-        robot's constant-velocity, threshold-gated pace — so reaching the
-        target still takes the usual step()/set_control() loop, exactly
-        like commanding move_xy/move_z on the real robot. rot_norm/grip_norm
-        default to their current commanded values if not given.
+        _target_pos that set_control() drives toward at the real robot's
+        constant-velocity pace — so reaching the target still takes the
+        usual step()/set_control() loop, exactly like commanding
+        move_xy/move_z on the real robot. rot_norm/grip_norm default to
+        their current commanded values if not given.
         """
 
-        rot_norm = float(self._current_pos[3]) if rot_norm is None else rot_norm
-        grip_norm = float(self._current_pos[4]) if grip_norm is None else grip_norm
+        rot_norm = float(self._target_pos[3]) if rot_norm is None else rot_norm
+        grip_norm = float(self._target_pos[4]) if grip_norm is None else grip_norm
 
         xyz_norm = self.solve_tcp_ik(
-            target_xyz_world, rot_norm, grip_norm, x0=self._current_pos[:3]
+            target_xyz_world, rot_norm, grip_norm, x0=self._target_pos[:3]
         )
         
         self._target_pos = np.array([*xyz_norm, rot_norm, grip_norm], dtype=np.float32)
         return self._target_pos.copy()
 
     def set_control(self, action: np.ndarray) -> None:
-        """Moves the robot given an action if step threshold is exceeded.
+        """Drives the robot toward an absolute normalized target pose.
 
-         This control principles mirrors the real cloudgripper robot's actuation.
-         Note: forward step of mujoco simulation is performed in parent step() 
+         action is the absolute [x, y, z, rot, grip] target (normalized
+         [0, 1]), matching the real cloudgripper robot's move_xy/move_z/
+         rotate/move_gripper API — not a delta accumulated over calls.
+
+         Each control step, the actuator closes the gap toward that
+         target at its physical rate limit (v_max) when far away, and
+         converges to it exactly (not just "close enough") once within
+         one control step's reach — a clipped-proportional/deadbeat law:
+         ctrl = clip(error / control_timestep, -v_max, v_max). This
+         matches the real robot's firmware (cloudgripper-controller):
+         x/y are open-loop steppers commanded via an exact absolute step
+         target (TeensyStep4's setTargetAbs(), Robot::moveTo() in
+         cloudgripper.cpp) with a trapezoidal accel/decel profile, not a
+         velocity*period deadband — there's no "stop once close enough"
+         behavior in the firmware, so freezing early here would be a
+         sim-only artifact, not hardware fidelity.
+         Note: forward step of mujoco simulation is performed in parent step()
 
         Args:
-            action: nd.array of action
+            action: nd.array of absolute normalized target pose
         """
 
-        # previous target positions are used since they might have stayed below threshold
-        self._target_pos = np.clip(self._target_pos + action, 0., 1.)
-        dx, dy, dz, dr, dg = np.abs(self._target_pos - self._current_pos)
-
-        next_pos = self._current_pos.copy()
-
-        # mirros real robot actuation by moving if threshold passed (ref. cloudgripper_env.py)
-        move_xy = (dx >= self._step_thresh) or (dy >= self._step_thresh)
-        next_pos[0] = self._target_pos[0] if move_xy else next_pos[0]
-        next_pos[1] = self._target_pos[1] if move_xy else next_pos[1]
-        next_pos[2] = self._target_pos[2] if dz >= self._step_thresh else next_pos[2]
-        next_pos[3] = self._target_pos[3] if dr >= self._step_thresh else next_pos[3]
-        next_pos[4] = self._target_pos[4] if dg >= self._step_thresh else next_pos[4]
+        self._target_pos = np.clip(action, 0., 1.)
 
         ctrl = np.zeros(len(self.joint_names))
-        for val, j_id, a_id in zip(next_pos, self.joint_names, self.actuator_names):
+        for (val, j_id, a_id) in zip(self._target_pos, self.joint_names, self.actuator_names):
 
-            joint = self._model.joint(j_id)
             actuator = self._model.actuator(a_id)
 
-            next_pos_mj = self.unnormalize(val, joint.range)
+            target_pos_mj = self.unnormalize(val, self._actuation_range(j_id))
 
             # use act instead of qpos as qpos reaches act through joint kp spring
-            # results in lagging & oscillation for joints carrying substantial mass 
+            # results in lagging & oscillation for joints carrying substantial mass
             current_pos_mj = self._data.act[actuator.actadr[0]]
-            error = next_pos_mj - current_pos_mj
+            error = target_pos_mj - current_pos_mj
 
-            # distance per control step
             v_max = actuator.ctrlrange[1]
-            deadband = v_max * self._control_timestep
-
-            # can't converge closer than one control step --> hold still
-            if abs(error) <= deadband:
-                ctrl[actuator.id] = 0.0
-            else:
-                ctrl[actuator.id] = v_max if error > 0.0 else -v_max
+            ctrl[actuator.id] = np.clip(error / self._control_timestep, -v_max, v_max)
 
         self._data.ctrl[:] = ctrl
-        self._current_pos = next_pos
 
 
     def render(

@@ -12,8 +12,25 @@
 
     <default>
         <default class="cube">
+            <!-- friction = [sliding, torsional, rolling]. Left at MuJoCo's
+                 default (1, 0.005, 0.0001) the cube has almost no
+                 resistance to spinning once pinched between two flat
+                 finger pads — contact combination uses componentwise max,
+                 so boosting only this geom's torsional/rolling terms is
+                 enough to raise it for cube-finger contacts (measured:
+                 without this, cube angular velocity while held reached
+                 15-30+ rad/s even on an otherwise-correct grasp).
+                 condim (contact dimensionality) MUST also go up to 6 —
+                 MuJoCo's default condim=3 only models normal + 2 sliding
+                 friction directions and silently IGNORES the torsional/
+                 rolling friction coefficients above no matter their
+                 value; confirmed by measuring geom_condim=3 here and
+                 seeing zero behavior change from the friction bump alone
+                 until this was added. Contact condim uses the max of the
+                 two geoms', so setting it only here still applies to
+                 every cube-finger/cube-floor contact. -->
             <geom type="mesh" mesh="cube" rgba="0.96 0.26 0.33 1.0" density="1240" solref="0.004 1" contype="3"
-                  group="1"/>
+                  friction="1 0.05 0.01" condim="6" group="1"/>
             <site type="sphere" size=".005" rgba="0 1 0 1" group="5"/>
         </default>
     </default>

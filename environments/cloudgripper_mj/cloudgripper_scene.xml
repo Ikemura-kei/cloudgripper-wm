@@ -1,5 +1,15 @@
 <mujoco>
   <compiler meshdir="./mesh" balanceinertia="true" inertiafromgeom="true"/>
+  <!-- elliptic (not the default pyramidal) friction cone: the pyramidal
+       approximation underestimates available friction in oblique
+       directions, especially with condim=6 (normal + sliding + torsional
+       + rolling) contacts like the cube-finger grip — measured directly:
+       switching to elliptic alone took small-cube (10-12mm) grasp success
+       from 0/5 to 4/5 on a fixed seed set, with no other change. Grip
+       force/stiffness (kp) and raw friction magnitude were ruled out
+       first (scaling either up to 8x made no difference or made things
+       worse) — this was a solver-accuracy issue, not a force one. -->
+  <option cone="elliptic"/>
   <visual>
     <headlight active="1"/>
   </visual>
@@ -28,9 +38,9 @@
   <actuator>
     <intvelocity name="x_actuator"             joint="Rail_joint"      ctrlrange="-0.125 0.125" kp="200" forcerange="-100 100" actrange="-0.1 0.1"/>
     <intvelocity name="y_actuator"             joint="Slider_joint"    ctrlrange="-0.125 0.125" kp="200" forcerange="-100 100" actrange="-0.08 0.08"/>
-    <intvelocity name="z_actuator"             joint="Linear_joint"    ctrlrange="-0.028 0.028" kp="200" forcerange="-100 100" actrange="0.0 0.04"/>
+    <intvelocity name="z_actuator"             joint="Linear_joint"    ctrlrange="-0.028 0.028" kp="200" forcerange="-100 100" actrange="0.0 0.043"/>
     <intvelocity name="rotate_actuator"        joint="Rotation_joint"  ctrlrange="-2.209 2.209" kp="200" forcerange="-100 100" actrange="-1.5708 1.5708"/>
-    <intvelocity name="gripper_right_actuator" joint="RightSpur_joint" ctrlrange="-0.736 0.736" kp="200" forcerange="-100 100" actrange="-0.5236 0.5236"/>
+    <intvelocity name="gripper_right_actuator" joint="RightSpur_joint" ctrlrange="-0.736 0.736" kp="200" forcerange="-100 100" actrange="-0.7854 0.7854"/>
   </actuator>
 
   <equality>
@@ -137,7 +147,7 @@
           <!-- MOVE IN Z -->      
           <body name="Arm_linear_gear" pos="0.010907754302024841 0.01390993595123291 -0.01373445987701416" quat="0.7071068286895752 -2.0097191597533148e-14 0.7071067690849304 2.0097189903467254e-14" gravcomp="1">
             <geom class="visual_mesh" type="mesh" name="Arm_linear_gear geom" mesh="Arm_linear_gear" material="yellow_plastic" />
-            <joint type="slide" name="Linear_joint" pos="2.2075089134432346e-07 -2.0116567611694336e-07 -4.3213367462158203e-07" axis="1.0 0.0 8.940696716308594e-08" limited="true" range="0.0 0.04" damping="10"/>
+            <joint type="slide" name="Linear_joint" pos="2.2075089134432346e-07 -2.0116567611694336e-07 -4.3213367462158203e-07" axis="1.0 0.0 8.940696716308594e-08" limited="true" range="0.0 0.043" damping="10"/>
             
             <body name="Arm_rotation_base" pos="0.035899024456739426 0.003044992685317993 0.0035235583782196045" quat="1.0 -2.984670345075602e-14 3.7748932868453267e-08 -3.774895773744902e-08" >
               <geom class="visual_mesh" type="mesh" name="Arm_rotation_base geom" mesh="Arm_rotation_base" material="black_plastic"  />
@@ -152,13 +162,13 @@
                 <!-- FINGER JOINTS -->
                 <body name="SpurGear1_v1" pos="0.01251694094389677 -0.006352581083774567 0.0014251470565795898" quat="0.9238795638084412 -2.6155217369705497e-07 -4.565666529288137e-07 -0.3826833963394165" >
                   <geom class="visual_mesh" type="mesh" name="SpurGear1_v1 geom" mesh="SpurGear1_v1" material="seethrough_plastic" />
-                  <joint type="hinge" name="RightSpur_joint" pos="-2.9802322387695312e-08 -1.4901161193847656e-08 0.0" axis="8.344650268554688e-07 2.2351741790771484e-07 1.0" limited="true" range="-30 30" damping="10"/>
+                  <joint type="hinge" name="RightSpur_joint" pos="-2.9802322387695312e-08 -1.4901161193847656e-08 0.0" axis="8.344650268554688e-07 2.2351741790771484e-07 1.0" limited="true" range="-45 45" damping="10"/>
       
                   <body name="Arm_grip_finger_right" pos="0.01572834700345993 -0.00017420947551727295 -1.043081283569336e-07" quat="0.8362867832183838 1.0935525551758474e-06 9.506068181508454e-07 0.5482922792434692" >
                     <geom type="mesh" name="Arm_grip_finger_right geom" mesh="Arm_grip_finger_right" material="yellow_plastic"  />
                     <joint type="hinge" name="RightFinger_joint"  pos="4.470348358154297e-08 -1.4901161193847656e-08 -4.470348358154297e-08" axis="-5.960464477539063e-08 2.205371856689453e-06 0.9999998807907104"  />
                     
-                    <site name="right_finger_site" pos="0.02460101805627346 -0.002549027092754841 -0.0022484585642814636" size="0.001"  />
+                    <site name="right_finger_site" pos="0.02785738743841648 -0.003831740003079176 -0.0022484660148620605" size="0.001"  />
                   </body>
       
                 </body>
@@ -171,7 +181,7 @@
                     <geom type="mesh" name="Arm_grip_finger_left geom" mesh="Arm_grip_finger_left" material="yellow_plastic" />
                     <joint type="hinge" name="LeftFinger_joint"  pos="-1.6763806343078613e-08 -3.725290298461914e-08 -2.9802322387695312e-08" axis="3.8743019104003906e-07 -1.4901161193847656e-06 1.0"  />
                     
-                    <site name="left_finger_site" pos="0.024601008743047714 0.0025490252301096916 -0.0022484585642814636" size="0.001"  />
+                    <site name="left_finger_site" pos="0.027868159115314484 0.0038031437434256077 -0.0022480040788650513" size="0.001"  />
                   </body>
       
                 </body>

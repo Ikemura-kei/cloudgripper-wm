@@ -42,7 +42,6 @@ def run(cfg: DictConfig) -> None:
         num_envs=cfg.num_envs,
         image_shape=tuple(cfg.world.image_shape),
         max_episode_steps=cfg.world.max_episode_steps,
-        max_delta=cfg.world.max_delta,
         height=cfg.world.height,
         width=cfg.world.width,
     )

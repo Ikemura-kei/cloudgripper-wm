@@ -19,6 +19,11 @@ import environments.cloudgripper_mj  # noqa: F401  (triggers gymnasium registrat
 def run(cfg: DictConfig) -> None:
     lance_out = _lance_path(cfg.output, cfg.output_name)
 
+    format = 'lance'
+    if cfg.as_video:
+        format = "video"
+        lance_out += f"_{format}" 
+
     n_existing = _count_existing_episodes(cfg.output, cfg.output_name)
     if n_existing > 0:
         _check_config_compatibility(cfg, cfg.output)
@@ -42,7 +47,6 @@ def run(cfg: DictConfig) -> None:
         num_envs=cfg.num_envs,
         image_shape=tuple(cfg.world.image_shape),
         max_episode_steps=cfg.world.max_episode_steps,
-        max_delta=cfg.world.max_delta,
         height=cfg.world.height,
         width=cfg.world.width,
         mode="task",
@@ -57,7 +61,7 @@ def run(cfg: DictConfig) -> None:
             seed = seed_start + collected
             if hasattr(policy, 'reset'):
                 policy.reset()
-            world.collect(path=lance_out, episodes=chunk, seed=seed)
+            world.collect(path=lance_out, episodes=chunk, seed=seed, format=format)
             collected += chunk
             logging.info(
                 f'Collected {n_existing + collected}/{cfg.episodes} episodes → {lance_out}'

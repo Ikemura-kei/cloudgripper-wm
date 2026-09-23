@@ -14,6 +14,7 @@ output_name: cloudgripper_mj
 num_envs: 1
 episodes: 10
 seed: 42
+as_video: true
   
 # collect policy
 policy:
@@ -24,9 +25,8 @@ policy:
 
 # world
 world:
-  image_shape: [480, 480]
+  image_shape: [1280, 1280]
   height: 480
   width: 480
   max_episode_steps: 250
-  max_delta: 0.05   
 

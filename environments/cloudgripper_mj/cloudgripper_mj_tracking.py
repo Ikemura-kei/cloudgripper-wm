@@ -115,10 +115,9 @@ class CloudgripperMuJoCoTracking(CloudgripperMuJoCoEnv):
             4) random color/intensity for the LED light strips
         """
 
-        # Sample new random configuration. 
+        # Sample new random configuration.
         self._target_pos = self.variation_space['agent']['start_pos'].value.astype(np.float32)
-        self._current_pos = self._target_pos.copy()
-        self.set_active_joints(self._current_pos)
+        self.set_active_joints(self._target_pos)
 
         # In task mode, sample a goal and goal image
         if self._mode == "task":
