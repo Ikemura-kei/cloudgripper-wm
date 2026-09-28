@@ -256,6 +256,11 @@ class CloudgripperMuJoCoEnv(CustomMuJoCoEnv):
             for site_name in self.finger_site_names
         ]
 
+
+        # placeholders so set_active_joints() can run for calibration
+        self._x_actuation_range = self.x_ws
+        self._y_actuation_range = self.y_ws
+
         self._calibrate_z_actuation_range()
         self._calibrate_xy_actuation_range()
 
@@ -300,10 +305,6 @@ class CloudgripperMuJoCoEnv(CustomMuJoCoEnv):
 
         qpos_backup = self.data.qpos.copy()
         try:
-            # placeholders so set_active_joints can solve
-            self._x_actuation_range = self.x_ws
-            self._y_actuation_range = self.y_ws
-
             self.set_active_joints([0.5, 0.5, 0.0, 0.5, 0.0])
             self.data.qpos[rail_adr] = 0.0
             self.data.qpos[slider_adr] = 0.0
@@ -548,7 +549,7 @@ class CloudgripperMuJoCoEnv(CustomMuJoCoEnv):
          Each control step, the actuator closes the gap toward that
          target at v_max when far away, and converges to it exactly.
          As real robot, control is a trapezoidal accel/decel profile.
-                  
+
          Note: forward step of mujoco simulation is performed in parent step()
 
         Args:
