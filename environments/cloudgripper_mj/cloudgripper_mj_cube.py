@@ -38,7 +38,11 @@ from stable_worldmodel import spaces as swm_spaces
 DEFAULT_VARIATIONS = (
     'agent.start_pos',
     'agent.goal_pos',
-    'cube',
+    'cube.start_pos',
+    'cube.start_yaw',
+    'cube.goal_pos',
+    'cube.goal_yaw',
+    # 'cube',
     # 'material',
     # 'light',
 )
@@ -77,6 +81,11 @@ class CloudgripperMuJoCoCube(CloudgripperMuJoCoEnv):
     grasp_squeeze_margin = 0.002
     success_dist_threshold = 0.004
     success_yaw_threshold = np.pi/12 # 15 degrees
+    # Extra steps to keep recording once the expert reaches "done" (holding
+    # its final pose) before truncating the episode — gives DINO-WM a few
+    # settled, post-placement frames instead of freezing for the rest of
+    # max_episode_steps every time. See truncate_episode().
+    done_settle_steps = 10
     expert_phases = [
         "approach",
         "open",
@@ -97,6 +106,7 @@ class CloudgripperMuJoCoCube(CloudgripperMuJoCoEnv):
         multiview: bool = False,
         height: int = 224,
         width: int = 224,
+        terminate_on_success: bool = False,
         *args,
         **kwargs,
     ):
@@ -106,6 +116,16 @@ class CloudgripperMuJoCoCube(CloudgripperMuJoCoEnv):
         self._multivew: bool = multiview
         self._goal_image: np.ndarray | None = None
         self._success: bool = False
+        # Off by default: during data collection the scripted expert keeps
+        # moving (release -> elevate -> retreat -> done) well after the cube
+        # first reaches the goal pose, since success is a pure geometric
+        # check that stays true for the rest of the episode once the cube is
+        # placed — terminating there would truncate every collected episode
+        # right after "place", losing the release/retreat portion. Only MPC
+        # eval (world.evaluate(dataset=...), whose success_rate is computed
+        # from world.terminateds) wants early termination on success; it
+        # opts in via `world.terminate_on_success: true`.
+        self._terminate_on_success: bool = terminate_on_success
 
         self.variation_space = swm_spaces.Dict({
             'agent': swm_spaces.Dict({
@@ -270,6 +290,7 @@ class CloudgripperMuJoCoCube(CloudgripperMuJoCoEnv):
         """
         self._success = False
         self._goal_image = None
+        self._done_steps = 0
 
         # Cube goal pose
         cgx, cgy = self.variation_space['cube']['goal_pos'].value
@@ -670,6 +691,40 @@ class CloudgripperMuJoCoCube(CloudgripperMuJoCoEnv):
         self._success = self._compute_success()
 
         return 1.0 if self._success else 0.0
+
+    def terminate_episode(self) -> bool:
+        """Ends the episode as soon as the cube reaches the goal — but only
+        when `terminate_on_success` was requested at construction (see
+        __init__). Otherwise defers to the ogbench base class's default
+        (always False), preserving the full expert trajectory for data
+        collection.
+
+        Reads `self._success` as of the end of the *previous* step:
+        `compute_reward()` (which sets it) runs after `terminate_episode()`
+        within `CustomMuJoCoEnv.step()`'s fixed call order — a harmless
+        one-step lag, same as `truncate_episode()`'s `_done_steps` count.
+        """
+        return self._terminate_on_success and self._success
+
+    def truncate_episode(self) -> bool:
+        """Ends the episode shortly after the expert trajectory reaches its
+        terminal 'done' phase, instead of always running to
+        max_episode_steps — most episodes finish the pick-and-place well
+        before the fixed horizon, and letting them idle the rest of the
+        way just pads the dataset with static, information-free frames.
+
+        `done_settle_steps` extra steps are kept once 'done' is reached
+        (rather than truncating immediately) so the recording still
+        includes a few frames of the settled, post-placement state.
+
+        Called once per step, before `get_step_info()` advances
+        `_expert_phase_idx` for this step — so `_done_steps` counts steps
+        whose *executed* action already targeted the 'done' pose, not
+        steps whose upcoming action will.
+        """
+        if self.expert_phases[self._expert_phase_idx] == "done":
+            self._done_steps += 1
+        return self._done_steps > self.done_settle_steps
 
     def get_reset_info(self) -> dict:
         """Returns a dict with the current reset info.

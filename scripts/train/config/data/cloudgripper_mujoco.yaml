@@ -6,7 +6,7 @@ dataset:
   # skips its cache-dir prefix for absolute paths (see _resolve_dataset in
   # stable_worldmodel/data/utils.py). ${hydra:runtime.cwd} is the directory
   # Hydra was launched from, regardless of hydra.job.chdir.
-  name: ${hydra:runtime.cwd}/.stable_worldmodel/datasets/tracking.lance
+  name: ${hydra:runtime.cwd}/.stable_worldmodel/datasets/cloudgripper_mj_cube.lance
   keys_to_load:
     - pixels
     - action

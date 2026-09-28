@@ -4,13 +4,23 @@ Usage:
     uv run python scripts/data/collect_cloudgripper_mujoco.py
 """
 
+import os
+
+# Must be set before mujoco is imported (directly or via environments.cloudgripper_mj
+# below), since it picks the GL backend at import/first-use time. Default GLFW/GLX
+# offscreen rendering is prone to "X Error ... GLX ... BadAccess" crashes once envs
+# reset asynchronously (each env truncates independently, so resets no longer stay
+# in lockstep across the pool) — EGL sidesteps X11/GLX entirely. setdefault() so an
+# explicitly exported MUJOCO_GL still wins.
+os.environ.setdefault("MUJOCO_GL", "egl")
+
 import hydra
 
 import stable_worldmodel as swm
 from loguru import logger as logging
 from omegaconf import DictConfig
 from hydra.utils import instantiate
-from helpers import _lance_path, _count_existing_episodes, _check_config_compatibility, _save_config
+from helpers import _lance_path, _count_existing_episodes, _check_config_compatibility, _save_config, _collect_materialized
 
 import environments.cloudgripper_mj  # noqa: F401  (triggers gymnasium registration)
 
@@ -61,7 +71,7 @@ def run(cfg: DictConfig) -> None:
             seed = seed_start + collected
             if hasattr(policy, 'reset'):
                 policy.reset()
-            world.collect(path=lance_out, episodes=chunk, seed=seed, format=format)
+            _collect_materialized(world, path=lance_out, episodes=chunk, seed=seed, format=format)
             collected += chunk
             logging.info(
                 f'Collected {n_existing + collected}/{cfg.episodes} episodes → {lance_out}'

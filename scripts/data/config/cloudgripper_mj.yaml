@@ -11,10 +11,10 @@ output: .stable_worldmodel/datasets/
 output_name: cloudgripper_mj
 
 # collect
-num_envs: 1
-episodes: 10
+num_envs: 10
+episodes: 10000
 seed: 42
-as_video: true
+as_video: false
   
 # collect policy
 policy:
@@ -25,7 +25,7 @@ policy:
 
 # world
 world:
-  image_shape: [1280, 1280]
+  image_shape: [480, 480]
   height: 480
   width: 480
   max_episode_steps: 250

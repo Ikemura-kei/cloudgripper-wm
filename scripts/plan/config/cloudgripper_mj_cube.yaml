@@ -1,0 +1,49 @@
+defaults:
+  - launcher: local
+  - solver: cem
+  - _self_
+
+# MuJoCo sim cube pick-and-place — not the real robot. See
+# scripts/data/collect_cloudgripper_mj_cube.py for how this env is
+# normally constructed; keep world.* in sync with that if you recollect.
+world:
+  env_name: cloudgripper_mj/Cube-v0
+  num_envs: ${eval.num_eval}
+  image_shape: [480, 480]  # matches collection's native render res (see .stable_worldmodel/datasets/cloudgripper_mj_cube_config.yaml) — no-op resize, policy transform does the actual 480->eval.img_size resize
+  max_episode_steps: 60  # overridden to 2*eval.eval_budget by the script regardless
+  height: 480
+  width: 480
+  mode: task
+  terminate_on_success: true  # otherwise CloudgripperMuJoCoCube.terminate_episode() defaults to False and world.evaluate()'s success_rate (computed from world.terminateds) always reads 0%
+
+dataset:
+  stats: ${eval.dataset_name}
+  keys_to_cache:
+    - action
+    - state
+
+seed: 42
+# Latest checkpoint from the lewm_mujoco training run (16 epochs completed
+# as of 2026-09-25; rerun `ls .stable_worldmodel/checkpoints/lewm_mujoco-*`
+# and bump the epoch number here if training has produced more since).
+policy: ${hydra:runtime.cwd}/.stable_worldmodel/checkpoints/lewm_mujoco-26-09-24-08-50-17-jaw/weights_epoch_16.pt
+
+plan_config:
+  horizon: 3
+  receding_horizon: 3
+  history_len: 3   # must match wm.history_size from scripts/train/config/lewm_mujoco.yaml
+  action_block: 1  # must match dataset.frameskip from scripts/train/config/data/cloudgripper_mujoco.yaml
+
+# evaluation from dataset (replay expert trajectories)
+eval:
+  num_eval: 4
+  goal_offset_steps: 20
+  eval_budget: 500
+  img_size: 224      # must match training img_size / encoder.image_size
+  dataset_name: ${hydra:runtime.cwd}/.stable_worldmodel/datasets/cloudgripper_mj_cube.lance
+
+compile: false
+bf16: false
+
+output:
+  filename: cloudgripper_mj_cube.txt

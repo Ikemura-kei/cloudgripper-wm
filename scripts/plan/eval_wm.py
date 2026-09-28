@@ -150,11 +150,12 @@ def run(cfg: DictConfig):
     cfg.world.max_episode_steps = 2 * cfg.eval.eval_budget
     from cloudgripper_wm.world import CloudGripperWorld
     from cloudgripper_wm.envs.robot_pool import RobotPool
-    import cloudgripper_wm.envs  # triggers gymnasium.register()
+    import cloudgripper_wm.envs  # triggers gymnasium.register() for real-robot env ids
+    import environments.cloudgripper_mj  # noqa: F401  (triggers gymnasium.register() for cloudgripper_mj/* sim env ids)
 
     num_envs = cfg.world.num_envs
     robot_names = list(cfg.world.get('robot_names', [f'robot{i+1}' for i in range(num_envs)]))
-    RobotPool.configure(robot_names)
+    RobotPool.configure(robot_names)  # no-op unless a real cloudgripper/* env is used (acquire() is never called by the mujoco sim env)
     _skip = {'robot_names', 'image_shape'}
     image_shape = tuple(cfg.world.get('image_shape', [224, 224]))
     world = swm.World(**{k: v for k, v in cfg.world.items() if k not in _skip},
