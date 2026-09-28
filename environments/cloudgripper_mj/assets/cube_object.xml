@@ -1,9 +1,5 @@
 <mujoco model="cube_object">
     <worldbody>
-
-        <!-- the one graspable cube. pos here is just the compiled-in
-             fallback — initialize_episode() places it at a randomized
-             (x, y, yaw) every reset. -->
         <body name="object_0" pos="0.0 0.0 0.0015">
             <freejoint name="object_joint_0"/>
             <geom name="object_0" class="cube"/>
