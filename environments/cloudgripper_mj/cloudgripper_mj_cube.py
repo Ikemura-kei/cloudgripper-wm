@@ -1,31 +1,23 @@
-"""CloudGripper MuJoCo cube task — ported from ogbench.manipspace.envs.cube_env.CubeEnv.
+"""CloudGripper MuJoCo Cube Pick'n'Place
 
-ogbench's CubeEnv is built on ManipSpaceEnv (a full 6-DoF arm with mocap-based
-IK targets, oracle policies, per-task init/goal position tables for up to 8
-cubes). CloudgripperMuJoCoEnv is a much simpler 5-DoF position-controlled rig
-(x/y/z/rotate/gripper via CloudgripperMuJoCoEnv.set_control()) built directly
-on the lower-level CustomMuJoCoEnv, not ManipSpaceEnv — so none of
-ManipSpaceEnv's arm/oracle machinery (self._arm_joint_ids, initialize_arm(),
-compute_ob_info(), lie.SO3 helpers, etc.) is available here. This file ports
-the *concept* (a free-jointed cube, reset randomization, distance-based
-success) using CloudgripperMuJoCoEnv's own control idiom, scoped down to a
-single cube (ogbench's `env_type='single'`) rather than the
-double/triple/quadruple/octuple stacking variants.
+OGBench inspired cube pick & place task in the Cloudgripper MuJoCo simulation.
+Expert trajectories are calculated as a state-machine architecture. The robot
+and cube start at arbitrary positions. The robot approaches the cube, lifts it
+and places at an arbitrary goal position. Afterwards it targets an arbitrary
+end location.
 
-Cube size is varied the same way stable_worldmodel's own ogbench cube env
-does it (see third_party/stable-worldmodel/stable_worldmodel/envs/ogbench/
-cube_env.py's modify_mjcf_model): a fresh continuous sample every episode,
-written onto the mesh asset's `scale` in the mjcf tree, recompiling the
-model (mark_dirty()) whenever it actually changes. Measured on this scene:
-a full recompile costs ~114ms vs ~0.035ms for the ordinary reset path — a
-real but modest per-episode cost (roughly 3-6% of a typical episode's
-wall-clock time here), traded for genuinely continuous size coverage and
-much simpler code than pre-baking discrete size variants.
+Default variations include:
+    robot start pose
+    robot end pose
+    cube start pose
+    cube end pose
+    cube end pose
+    cube size
+    cube color
+Further variations can be sampled:
+    robot material
+    light intensity
 
-Several numeric choices below are ASSUMPTIONS made without hardware/visual
-confirmation — search for "ASSUMPTION" and adjust as needed. Everything
-tagged "measured" was derived directly from cloudgripper_scene.xml via
-mujoco raycasting/forward-kinematics, not guessed.
 """
 
 import mujoco
@@ -38,13 +30,7 @@ from stable_worldmodel import spaces as swm_spaces
 DEFAULT_VARIATIONS = (
     'agent.start_pos',
     'agent.goal_pos',
-    'cube.start_pos',
-    'cube.start_yaw',
-    'cube.goal_pos',
-    'cube.goal_yaw',
-    # 'cube',
-    # 'material',
-    # 'light',
+    'cube',
 )
 
 class CloudgripperMuJoCoCube(CloudgripperMuJoCoEnv):
@@ -52,41 +38,17 @@ class CloudgripperMuJoCoCube(CloudgripperMuJoCoEnv):
     
         z_spawn_cube: equals half of cloudgripper's ground plate thickness
         cube_size_range: measured with respect to gripper-opening length
-        grasp_extra_lift: ASSUMPTION — extra height above the cube's true
-            center to target when grasping, linearly interpolated from 0
-            (smallest sampled cube) to this value (largest) — see
-            _compute_expert_waypoint(). Empirically tuned on a small
-            (8-episode) test batch, not derived from a mechanical model;
-            tune further if grasp reliability still looks off.
         success_dist_threshold: target cube position error
         success_yaw_threshold: target cube rotation error
         expert_phases: describes the state-machine of the pick-and-place task
     """
 
     z_spawn_cube = 0.0015  # equal to half of cloudgripper's ground-plate thickness
-
     cube_size_range = (0.01, 0.03)
-    grasp_extra_lift = 0.003
-    # ASSUMPTION: not yet tuned — stretches the "grasp" phase to this many
-    # times its natural (v_max-paced) duration, ramping the commanded grip
-    # gradually instead of slamming to fully-closed in one step like every
-    # other phase's target does. See _advance_expert_phase().
-    grasp_slowdown_factor = 4.0
-    # ASSUMPTION: not yet tuned — "grasp" targets grip_norm closed just
-    # enough to narrow the fingers to (cube_size - grasp_squeeze_margin),
-    # not the mechanical close=1.0 limit, so the actuator's finite
-    # position-servo stiffness generates a bounded squeeze instead of
-    # fighting to close a gap the cube physically blocks. See
-    # _grip_norm_for_separation() / _advance_expert_phase().
-    grasp_squeeze_margin = 0.002
     success_dist_threshold = 0.004
     success_yaw_threshold = np.pi/12 # 15 degrees
-    # Extra steps to keep recording once the expert reaches "done" (holding
-    # its final pose) before truncating the episode — gives DINO-WM a few
-    # settled, post-placement frames instead of freezing for the rest of
-    # max_episode_steps every time. See truncate_episode().
-    done_settle_steps = 10
     expert_phases = [
+        "rise",
         "approach",
         "open",
         "descend",
@@ -99,6 +61,7 @@ class CloudgripperMuJoCoCube(CloudgripperMuJoCoEnv):
         "retreat",
         "done",
     ]
+
 
     def __init__(
         self,
@@ -116,15 +79,6 @@ class CloudgripperMuJoCoCube(CloudgripperMuJoCoEnv):
         self._multivew: bool = multiview
         self._goal_image: np.ndarray | None = None
         self._success: bool = False
-        # Off by default: during data collection the scripted expert keeps
-        # moving (release -> elevate -> retreat -> done) well after the cube
-        # first reaches the goal pose, since success is a pure geometric
-        # check that stays true for the rest of the episode once the cube is
-        # placed — terminating there would truncate every collected episode
-        # right after "place", losing the release/retreat portion. Only MPC
-        # eval (world.evaluate(dataset=...), whose success_rate is computed
-        # from world.terminateds) wants early termination on success; it
-        # opts in via `world.terminate_on_success: true`.
         self._terminate_on_success: bool = terminate_on_success
 
         self.variation_space = swm_spaces.Dict({
@@ -178,7 +132,7 @@ class CloudgripperMuJoCoCube(CloudgripperMuJoCoEnv):
                     high=self.cube_size_range[1],
                     shape=(1,),
                     dtype=np.float64,
-                    init_value=np.array([0.03]),
+                    init_value=np.array([np.mean(self.cube_size_range)]),
                 ),
                 'start_pos': swm_spaces.Box(
                     low=np.array([0.0, 0.0]),
@@ -210,6 +164,7 @@ class CloudgripperMuJoCoCube(CloudgripperMuJoCoEnv):
                 ),
             })
         })
+
 
     def modify_mjcf_model(self, mjcf_model):
         """Spawn the cube if it is not found in the scene. If the size has
@@ -244,6 +199,7 @@ class CloudgripperMuJoCoCube(CloudgripperMuJoCoEnv):
 
         return mjcf_model
 
+
     def post_compilation_objects(self) -> None:
         """Caches the cube geom id after the mujoco model compiles."""
         self._cube_geom_id = mujoco.mj_name2id(
@@ -251,6 +207,7 @@ class CloudgripperMuJoCoCube(CloudgripperMuJoCoEnv):
             mujoco.mjtObj.mjOBJ_GEOM,
             'object_0'
         )
+
 
     def reset(
         self,
@@ -278,6 +235,7 @@ class CloudgripperMuJoCoCube(CloudgripperMuJoCoEnv):
 
         return obs, info
 
+
     def initialize_episode(self) -> None:
         """Initializes a new episode for picking the cube.
 
@@ -299,15 +257,13 @@ class CloudgripperMuJoCoCube(CloudgripperMuJoCoEnv):
         self._cube_goal_xyz = np.array([*cube_goal_xy, self.z_spawn_cube], dtype=np.float32)
         self._cube_goal_yaw = float(cube_goal_yaw)
 
-        # Cube start pose — set now (before sampling agent.start_pos)
-        # so _sample_agent_start_pos_avoiding_cube() below can check
-        # candidates against the cube's actual start position.
+        # Cube start pose
         csx, csy = self.variation_space['cube']['start_pos'].value
         cube_start_xy = (self.unnormalize(csx, self.x_ws), self.unnormalize(csy, self.y_ws))
         cube_start_yaw = self.variation_space['cube']['start_yaw'].value[0]
         self._set_cube_pose(*cube_start_xy, cube_start_yaw)
 
-        self._target_pos = self._sample_agent_start_pos_avoiding_cube()
+        self._target_pos = self._sample_agent_start_pos()
         self._goal_pos = self.variation_space['agent']['goal_pos'].value
 
         # Task mode generates a goal image
@@ -322,6 +278,7 @@ class CloudgripperMuJoCoCube(CloudgripperMuJoCoEnv):
 
         # Robot start pose
         self.set_active_joints(self._target_pos)
+        self._sync_act_to_target_pos()
 
         # Cube color
         cube_col = self.variation_space['cube']['color'].value
@@ -349,6 +306,7 @@ class CloudgripperMuJoCoCube(CloudgripperMuJoCoEnv):
         )
         self._expert_phase_steps_left = self._steps_for_move(first_waypoint)
 
+
     def _set_cube_pose(self, x: float, y: float, yaw: float):
         """Positions the cube at (x,y) with orientation yaw on the ground plate.
         
@@ -362,21 +320,12 @@ class CloudgripperMuJoCoCube(CloudgripperMuJoCoEnv):
         cube_joint.qpos[3:] = [np.cos(yaw / 2), 0.0, 0.0, np.sin(yaw / 2)]
         cube_joint.qvel[:] = 0.0
 
-    def _sample_agent_start_pos_avoiding_cube(self, max_tries: int = 20) -> np.ndarray:
+
+    def _sample_agent_start_pos(self, max_tries: int = 20) -> np.ndarray:
         """Resamples agent.start_pos until the gripper pose doesn't
         already overlap the cube's just-placed start pose.
 
-         agent.start_pos and cube.start_pos are sampled independently,
-         so a random gripper pose can otherwise initialize already
-         clipped into the cube — the first mj_step then violently
-         resolves that invalid overlap, launching the cube to wherever,
-         which the expert trajectory never accounts for (traced from a
-         real failure: 6.26mm of finger-cube penetration already present
-         at reset, before any movement — the episode never recovers).
-
-         Tries the value reset_variation_space() already sampled first
-         (the common case — no collision, no extra draw), then draws
-         fresh samples via the Box's own .sample() only if needed.
+         max_tries: number of tries to find a position
         """
         box = self.variation_space['agent']['start_pos']
         candidate = box.value
@@ -387,6 +336,7 @@ class CloudgripperMuJoCoCube(CloudgripperMuJoCoEnv):
                 return candidate
             candidate = box.sample()
         return candidate
+
 
     def _gripper_touches_cube(self) -> bool:
         """True if either fingertip geom is currently in contact with the
@@ -401,6 +351,32 @@ class CloudgripperMuJoCoCube(CloudgripperMuJoCoEnv):
             if self._cube_geom_id in pair and pair & finger_geom_ids:
                 return True
         return False
+
+    def _sync_act_to_target_pos(self) -> None:
+        """Syncs every actuator's act (integrator/activation state) to
+        match self._target_pos, right after teleporting the robot there
+        via set_active_joints().
+
+         mj_resetData() zeros act on every reset, but set_active_joints()
+         only writes qpos — it never touches act. set_control() tracks
+         error against act, not qpos, so without this the low-level
+         controller starts a fresh episode thinking it's still at act=0
+         (wherever that unnormalizes to) even though the robot just got
+         teleported elsewhere, and spends the first several steps
+         silently "catching up" to its own actual starting pose before
+         doing anything the current phase asked for — most visible on
+         grip, where "approach" is meant to hold it perfectly still.
+         Only call this right after a genuine state teleport (episode
+         start) — never after the temporary FK probes elsewhere
+         (solve_tcp_ik, calibration, etc.), which must leave the real
+         act alone.
+        """
+        for i, (j_id, a_id) in enumerate(zip(self.joint_names, self.actuator_names)):
+            actuator = self._model.actuator(a_id)
+            self._data.act[actuator.actadr[0]] = self.unnormalize(
+                self._target_pos[i], self._actuation_range(j_id)
+            )
+
 
     def _steps_for_move(self, target: np.ndarray, settle=5) -> int:
         """Returns the number of environment steps required to reach a target
@@ -428,13 +404,17 @@ class CloudgripperMuJoCoCube(CloudgripperMuJoCoEnv):
 
         return steps + settle
 
+
     def _cube_xyz(self) -> float:
         """Get the current position of the cube object.
+
+         The frame is located at the center of the bottom face.
                 
         returns:
             cube yaw in radians
         """
         return self._data.joint('object_joint_0').qpos[:3].copy()
+
 
     def _cube_yaw(self) -> float:
         """Get the current x-y orientation of the cube object.
@@ -445,25 +425,37 @@ class CloudgripperMuJoCoCube(CloudgripperMuJoCoEnv):
         qw, _, _, qz = self._data.joint('object_joint_0').qpos[3:7]
         return 2.0 * float(np.arctan2(qz, qw))
 
+
     def _yaw_to_rot_norm(self, yaw: float) -> float:
-        """rot_norm whose closing axis is aligned (mod 90deg) with the
-        given world yaw — a cube has 4-fold rotational symmetry, so only
-        yaw mod 90deg actually matters, and wrapping into (-pi/4, pi/4]
-        keeps the result within the gripper's actual rotation range.
+        """Aligns the gripper's normalized orientation with the closest
+        cube grasp (mod 90deg due to 4-fold rotational symmetry.)
+        
+        args:
+            yaw: orientation around z
+        returns:
+            aligned normalized angle
         """
         aligned_angle = ((yaw + np.pi / 4) % (np.pi / 2)) - np.pi / 4
         return aligned_angle / np.pi + 0.5
 
-    def _grip_norm_for_separation(self, target_sep: float, tol: float = 1e-4, max_iter: int = 20) -> float:
-        """Bisects for the grip_norm whose finger separation equals
-        target_sep. Separation decreases monotonically as grip_norm goes
-        0 (open) -> 1 (closed) over the rig's full mechanical range (see
-        cloudgripper_scene.xml's RightSpur_joint range) — probes forward
-        kinematics via set_active_joints (x/y/z/rot fixed, irrelevant to
-        separation) but restores qpos afterward, same pattern as
-        solve_tcp_ik.
+
+    def _grip_norm_for_separation(
+            self,
+            tol: float = 1e-4,
+            max_iter: int = 20
+        ) -> float:
+        """Returns the normalized gripper actuation target given the cube size.
+
+        args:
+            tol: error tolerance for reaching the target gripper distance.
+            max_iter: number of steps to approach distance
+        returns:
+            target gripper distance
         """
         qpos_backup = self.data.qpos.copy()
+
+        # for a tight grasp, squeeze the cube slightly
+        target_sep = max(self._cube_size - 0.002, 0.0005)
         try:
             lo, hi = 0.0, 1.0
             mid = 0.5
@@ -482,34 +474,28 @@ class CloudgripperMuJoCoCube(CloudgripperMuJoCoEnv):
             self.data.qpos[:] = qpos_backup
             mujoco.mj_forward(self.model, self.data)
 
-    def _live_grasp_target_pos(self) -> np.ndarray:
-        """Cube-relative grasp target, re-read fresh from the cube's
-        current live position — used for "approach"/"open"/"descend",
-        where the cube isn't touched yet so tracking its live pose is
-        correct. NOT used for "grasp"/"lift" — see _advance_expert_phase().
+
+    def _grasp_target_pos(self) -> np.ndarray:
+        """Returns the current xyz-position of the target grasp.
+
+         For the smallest size, the target is the cube's center.
+         The grasp height is linearly lifted to avoid collision
+         with the finger' spurs for larger cube sizes. 
+
+        returns:
+            target xyz
         """
-        # _cube_xyz() is the cube body's qpos, which is its BOTTOM-face
-        # position (the mesh's local origin, not its center — see
-        # assets/cube_class.xml) — cube_size/2 reaches the true center
-        # for ANY cube, regardless of where its size falls in
-        # cube_size_range (this part is exact, not tuned).
-        #
-        # ASSUMPTION: on top of that, linearly lift the target from
-        # true center (smallest sampled cube) up to grasp_extra_lift
-        # above center (largest sampled cube) — the parallel jaws'
-        # arc-like closing motion makes an exact-center grasp less
-        # reliable for wider cubes. Empirically tuned, not derived
-        # from a mechanical model — tune visually.
         cs_low, cs_up = self.cube_size_range
-        frac = (self._cube_size - cs_low) / (cs_up - cs_low) if cs_up > cs_low else 0.0
-        off = self._cube_size / 2 + frac * self.grasp_extra_lift
+        frac = (self._cube_size - cs_low) / (cs_up - cs_low)
+        off = self._cube_size / 2 + frac * self._cube_size/4
         return self._cube_xyz() + np.array([0, 0, off])
+
 
     def _compute_expert_waypoint(
         self,
         phase: str,
-        rot_norm_override: float | None = None,
-        grip_override: float | None = None,
+        rot: float | None = None,
+        grip: float | None = None,
     ) -> np.ndarray:
         """Returns normalized [x, y, z, rot, grip] target for current phase.
 
@@ -520,9 +506,9 @@ class CloudgripperMuJoCoCube(CloudgripperMuJoCoEnv):
          If the 'done' phase is reached, the current pose is returned.
 
          args:
-            phase: current phase name
-            rot_norm_override: if given, use this rot_norm instead of the
-                phase's default cube-aligned/goal-aligned value.
+            phase: current phase name.
+            rot: set a specific gripper orientation.
+            grip: set a specific gripper opening angle.
          returns:
             the arm's target pose in the current phase, current pose if done.
         """
@@ -530,35 +516,41 @@ class CloudgripperMuJoCoCube(CloudgripperMuJoCoEnv):
         def ik(pose, rot_norm, grip):
             return self.solve_tcp_ik(pose, rot_norm, grip, self._target_pos[:3])
 
-        # normalized z_norm (not world meters) for phases that just need
-        # to stay elevated/out of the way — z_norm=1 is up (see
-        # CloudgripperMuJoCoEnv._actuation_range()), so this is close to
-        # the top of the range, not literally 0.15m.
-        transit_height = 0.85
+        # z_norm=1 (max height — see CloudgripperMuJoCoEnv._actuation_range())
+        # for the arm's transit/flyover height, to keep the fingers well
+        # clear of the cube while moving laterally over it — measured
+        # real failure otherwise: at the old 0.85, a 19mm cube left only
+        # ~5.6mm clearance, and the approach flight clipped its top
+        # corner, spinning/nudging it before the intentional grasp
+        # sequence even began.
+        transit_height = 1.0
         open = 0.0
         close = 1.0
-        if phase in ("grasp", "lift", "transit", "place") and hasattr(self, "_hold_grip"):
-            # Cube-size-aware close amount (see _grip_norm_for_separation),
-            # not the mechanical close=1.0 limit — closing all the way once
-            # the cube already blocks the fingers just builds unbounded
-            # force until it gets squeezed out. Holds through place;
-            # release still opens fully (uses `open`, unaffected by this).
+        if phase in ("grasp", "lift", "transit", "place"):
             close = self._hold_grip
         if phase in ("transit", "place", "release"):
             rot_norm = self._yaw_to_rot_norm(self._cube_goal_yaw)
             pos = self._cube_goal_xyz
         else:
             rot_norm = self._yaw_to_rot_norm(self._cube_yaw())
-            pos = self._live_grasp_target_pos()
+            pos = self._grasp_target_pos()
 
-        if rot_norm_override is not None:
-            rot_norm = rot_norm_override
-        if grip_override is not None:
-            close = grip_override
+        if rot is not None:
+            rot_norm = rot
+        if grip is not None:
+            close = grip
 
-        if phase == "approach":
-            xy = ik(pos, rot_norm, close)[:2]
-            return np.array([*xy, transit_height, rot_norm, close])
+        if phase == "rise":
+            # Z-only move to transit_height, holding the robot's current
+            # x/y/rot in place — guarantees the arm is clear of any cube
+            # before "approach" starts moving horizontally, instead of
+            # racing XY and Z simultaneously from a random start height
+            # (measured real failure: starting low, the arm could still
+            # be below a cube's top while already passing over it).
+            return np.array([*self._target_pos[:2], transit_height, self._target_pos[3], open])
+        elif phase == "approach":
+            xy = ik(pos, rot_norm, open)[:2]
+            return np.array([*xy, transit_height, rot_norm, open])
         elif phase== "open":
             xy = ik(pos, rot_norm, close)[:2]
             return np.array([*xy, transit_height, rot_norm, open])
@@ -589,6 +581,43 @@ class CloudgripperMuJoCoCube(CloudgripperMuJoCoEnv):
         else:
             return self._target_pos.copy()  # "done": hold position
 
+
+    def _on_phase_enter(self, phase: str) -> None:
+        """Phase-specific setup that must run *before* this phase's own
+        waypoint/step-budget is computed.
+        
+        args:
+            phase: upcomding phase name
+        """
+        if phase == "grasp":
+            # Compute the gripper closing distance for the current cube
+            self._hold_grip = np.clip(self._grip_norm_for_separation(), 0.0, 1.0)
+
+
+    def ramp_target(self, phase: str) -> None:
+        """Sets up a linear interpolation to approach target value.
+        
+         In grasp phase, the target grip is approached linearly. In
+         transit phase, the goal orientation is approached linearly.
+        
+        args:
+            phase: upcoming phase
+        """
+
+        if phase == "grasp":
+            # grasp is slowed down by a factor of 2 to avoid hard contacts
+            self._expert_phase_steps_left = max(self._expert_phase_steps_left * 2, 1)
+            self._ramp_start = float(self._target_pos[4])
+            self._ramp_end = self._hold_grip
+        elif phase == "transit":
+            # gradually approach target yaw so the cube isn't dropped during transit
+            self._ramp_start = float(self._target_pos[3])
+            self._ramp_end = self._yaw_to_rot_norm(self._cube_goal_yaw)
+        else:
+            return
+        self._ramp_total_steps = self._expert_phase_steps_left
+
+
     def _advance_expert_phase(self) -> np.ndarray:
         """Advance the phase state machine by one step.
 
@@ -607,59 +636,26 @@ class CloudgripperMuJoCoCube(CloudgripperMuJoCoEnv):
                 self._expert_phase_steps_left <= 0
                 and self._expert_phase_idx < len(self.expert_phases) - 1
             ):
+                # move on to next phase
                 self._expert_phase_idx += 1
                 phase = self.expert_phases[self._expert_phase_idx]
 
-                if phase == "grasp":
-                    # Cube-size-aware hold amount, computed BEFORE
-                    # _compute_expert_waypoint(phase) below so its
-                    # hasattr(self, "_hold_grip") check already sees it
-                    # for this transition's own step-budget estimate too.
-                    target_sep = max(self._cube_size - self.grasp_squeeze_margin, 0.0005)
-                    self._hold_grip = float(np.clip(self._grip_norm_for_separation(target_sep), 0.0, 1.0))
-
+                self._on_phase_enter(phase)
                 waypoint = self._compute_expert_waypoint(phase)
                 self._expert_phase_steps_left = self._steps_for_move(waypoint)
+                self.ramp_target(phase)
 
-                if phase == "grasp":
-                    # Closing at the natural (fast) pace _steps_for_move
-                    # estimates is what's shoving the cube sideways on
-                    # first contact — the faster the fingers slam shut,
-                    # the more lateral push an (likely asymmetric) touch
-                    # imparts. Stretch "grasp" out by grasp_slowdown_factor
-                    # and ramp the commanded grip target gradually across
-                    # it, instead of jumping straight to fully closed like
-                    # every other phase's target does.
-                    self._grasp_start_grip = float(self._target_pos[4])
-                    self._grasp_total_steps = max(
-                        int(self._expert_phase_steps_left * self.grasp_slowdown_factor), 1
-                    )
-                    self._expert_phase_steps_left = self._grasp_total_steps
+        exp_wp = self._compute_expert_waypoint
+        if phase in ["grasp", "transit"]:
+            total = max(self._ramp_total_steps, 1)
+            progress = np.clip(1.0 - self._expert_phase_steps_left / total, 0.0, 1.0)
+            value = self._ramp_start + progress * (self._ramp_end - self._ramp_start)
 
-                if phase == "transit":
-                    self._transit_start_rot_norm = float(self._target_pos[3])
-                    self._transit_end_rot_norm = self._yaw_to_rot_norm(self._cube_goal_yaw)
-                    self._transit_total_steps = self._expert_phase_steps_left
+            wp = exp_wp(phase, grip=value) if phase == "grasp" else exp_wp(phase, rot=value)
+        else:
+            wp = exp_wp(phase)
 
-        if phase == "transit":
-            # linear interpolation from rotation during gripping to goal-aligned rotation
-            total = max(self._transit_total_steps, 1)
-            progress = float(np.clip(1.0 - self._expert_phase_steps_left / total, 0.0, 1.0))
-            rot_norm = self._transit_start_rot_norm + progress * (
-                self._transit_end_rot_norm - self._transit_start_rot_norm
-            )
-            return self._compute_expert_waypoint(phase, rot_norm_override=rot_norm).astype(np.float32)
-
-        if phase == "grasp":
-            # linear interpolation from open (grip at start of grasp) to
-            # fully closed, stretched across grasp_slowdown_factor as many
-            # steps as the natural pace — see _advance_expert_phase.
-            total = max(self._grasp_total_steps, 1)
-            progress = float(np.clip(1.0 - self._expert_phase_steps_left / total, 0.0, 1.0))
-            grip = self._grasp_start_grip + progress * (self._hold_grip - self._grasp_start_grip)
-            return self._compute_expert_waypoint(phase, grip_override=grip).astype(np.float32)
-
-        return self._compute_expert_waypoint(phase).astype(np.float32)
+        return wp.astype(np.float32)
 
 
     def _compute_success(self) -> bool:
@@ -681,6 +677,7 @@ class CloudgripperMuJoCoCube(CloudgripperMuJoCoEnv):
             (yaw_err <= self.success_yaw_threshold)
         )
 
+
     def compute_reward(self) -> float:
         """Determine the reward of the current state.
         If the cube has reached the goal, it turns green.
@@ -692,39 +689,24 @@ class CloudgripperMuJoCoCube(CloudgripperMuJoCoEnv):
 
         return 1.0 if self._success else 0.0
 
-    def terminate_episode(self) -> bool:
-        """Ends the episode as soon as the cube reaches the goal — but only
-        when `terminate_on_success` was requested at construction (see
-        __init__). Otherwise defers to the ogbench base class's default
-        (always False), preserving the full expert trajectory for data
-        collection.
 
-        Reads `self._success` as of the end of the *previous* step:
-        `compute_reward()` (which sets it) runs after `terminate_episode()`
-        within `CustomMuJoCoEnv.step()`'s fixed call order — a harmless
-        one-step lag, same as `truncate_episode()`'s `_done_steps` count.
+    def terminate_episode(self) -> bool:
+        """Returns true if success and set to terminate on success in init. 
         """
         return self._terminate_on_success and self._success
 
-    def truncate_episode(self) -> bool:
+
+    def truncate_episode(self, done_settle_steps=10) -> bool:
         """Ends the episode shortly after the expert trajectory reaches its
-        terminal 'done' phase, instead of always running to
-        max_episode_steps — most episodes finish the pick-and-place well
-        before the fixed horizon, and letting them idle the rest of the
-        way just pads the dataset with static, information-free frames.
+        terminal 'done' phase.
 
-        `done_settle_steps` extra steps are kept once 'done' is reached
-        (rather than truncating immediately) so the recording still
-        includes a few frames of the settled, post-placement state.
-
-        Called once per step, before `get_step_info()` advances
-        `_expert_phase_idx` for this step — so `_done_steps` counts steps
-        whose *executed* action already targeted the 'done' pose, not
-        steps whose upcoming action will.
+        args:
+            done_settle_steps: number of steps until episode is truncated
         """
         if self.expert_phases[self._expert_phase_idx] == "done":
             self._done_steps += 1
-        return self._done_steps > self.done_settle_steps
+        return self._done_steps > done_settle_steps
+
 
     def get_reset_info(self) -> dict:
         """Returns a dict with the current reset info.
@@ -752,6 +734,7 @@ class CloudgripperMuJoCoCube(CloudgripperMuJoCoEnv):
         phase = self.expert_phases[self._expert_phase_idx]
         info["expert_target"] = self._compute_expert_waypoint(phase).astype(np.float32)
         return info
+
 
     def get_step_info(self) -> dict:
         """Returns a dict with the current reset info.
@@ -783,7 +766,6 @@ if __name__ == "__main__":
         obs, info = env.reset(seed=0)
         obs, reward, terminated, truncated, info = env.step(env.action_space.sample())
         frame = env.render()
-        print(obs, reward, info["cube_pos"], info["target_pos"])
         from PIL import Image
         img = Image.fromarray(frame)
         img.show()

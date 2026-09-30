@@ -12,10 +12,11 @@ policy:
   max_repeat: 5
   noise_std: 0.1
 
-# Pick-and-place needs the full approach->...->done phase sequence to
-# complete — measured 369-412 steps end-to-end (grasp alone, slowed by
-# grasp_slowdown_factor, takes 120-168 steps), so the base 250 was
-# cutting episodes off mid-grasp/lift/transit, before ever reaching
-# "place" — matches the truncated-before-placing videos.
 world:
   max_episode_steps: 500
+
+# Which parts of the env's variation_space to resample each episode —
+# e.g. ['agent.start_pos', 'agent.goal_pos', 'cube.start_pos', 'cube.goal_pos']
+# to vary cube position but leave its size/color fixed at their init_value.
+# Left as null, the env falls back to its own CloudgripperMuJoCoCube.DEFAULT_VARIATIONS.
+variation: null

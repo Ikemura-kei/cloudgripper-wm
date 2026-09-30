@@ -14,7 +14,7 @@ output_name: cloudgripper_mj
 num_envs: 10
 episodes: 10000
 seed: 42
-as_video: false
+as_video: true
   
 # collect policy
 policy:

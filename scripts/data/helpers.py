@@ -52,10 +52,17 @@ def _collect_materialized(
     episodes: int,
     seed: int,
     format: str = 'lance',
+    options: dict | None = None,
 ) -> None:
     """Same rollout/write behavior as ``World.collect()``, except every
     episode is fully rolled out (and rendered) in the calling thread
     *before* any of it is handed to the writer.
+
+    ``options`` is forwarded to ``envs.reset()`` exactly like
+    ``World.collect()``'s own ``options`` — e.g. ``{'variation': [...]}``
+    to pick which parts of the env's variation space get resampled each
+    episode (see the target env's ``DEFAULT_VARIATIONS`` for what happens
+    when this is left as ``None``).
 
     ``World.collect()`` streams a lazy generator straight into
     ``writer.write_episodes()``. For the Lance format, lancedb pulls that
@@ -101,7 +108,7 @@ def _collect_materialized(
     all_episodes = []
     with tqdm(total=episodes, desc='Recording') as pbar:
         for env_idx, _ in world._run_iter(
-            episodes=episodes, seed=seed, mode='auto', on_step=on_step
+            episodes=episodes, seed=seed, options=options, mode='auto', on_step=on_step
         ):
             ep = {k: list(v) for k, v in buffers[env_idx].items()}
             buffers[env_idx].clear()
