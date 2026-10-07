@@ -5,13 +5,6 @@ Usage:
 """
 
 import os
-
-# Must be set before mujoco is imported (directly or via environments.cloudgripper_mj
-# below), since it picks the GL backend at import/first-use time. Default GLFW/GLX
-# offscreen rendering is prone to "X Error ... GLX ... BadAccess" crashes once envs
-# reset asynchronously (each env truncates independently, so resets no longer stay
-# in lockstep across the pool) — EGL sidesteps X11/GLX entirely. setdefault() so an
-# explicitly exported MUJOCO_GL still wins.
 os.environ.setdefault("MUJOCO_GL", "egl")
 
 import hydra

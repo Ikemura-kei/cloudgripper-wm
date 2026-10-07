@@ -353,23 +353,11 @@ class CloudgripperMuJoCoCube(CloudgripperMuJoCoEnv):
         return False
 
     def _sync_act_to_target_pos(self) -> None:
-        """Syncs every actuator's act (integrator/activation state) to
-        match self._target_pos, right after teleporting the robot there
-        via set_active_joints().
+        """Syncs every actuator's act to match self._target_pos as 
+        set_control() tracks error against act and not qpos only
 
-         mj_resetData() zeros act on every reset, but set_active_joints()
-         only writes qpos — it never touches act. set_control() tracks
-         error against act, not qpos, so without this the low-level
-         controller starts a fresh episode thinking it's still at act=0
-         (wherever that unnormalizes to) even though the robot just got
-         teleported elsewhere, and spends the first several steps
-         silently "catching up" to its own actual starting pose before
-         doing anything the current phase asked for — most visible on
-         grip, where "approach" is meant to hold it perfectly still.
-         Only call this right after a genuine state teleport (episode
-         start) — never after the temporary FK probes elsewhere
-         (solve_tcp_ik, calibration, etc.), which must leave the real
-         act alone.
+        Note that this function should only be called after teleporting
+        the robot to an initial position
         """
         for i, (j_id, a_id) in enumerate(zip(self.joint_names, self.actuator_names)):
             actuator = self._model.actuator(a_id)
@@ -516,13 +504,6 @@ class CloudgripperMuJoCoCube(CloudgripperMuJoCoEnv):
         def ik(pose, rot_norm, grip):
             return self.solve_tcp_ik(pose, rot_norm, grip, self._target_pos[:3])
 
-        # z_norm=1 (max height — see CloudgripperMuJoCoEnv._actuation_range())
-        # for the arm's transit/flyover height, to keep the fingers well
-        # clear of the cube while moving laterally over it — measured
-        # real failure otherwise: at the old 0.85, a 19mm cube left only
-        # ~5.6mm clearance, and the approach flight clipped its top
-        # corner, spinning/nudging it before the intentional grasp
-        # sequence even began.
         transit_height = 1.0
         open = 0.0
         close = 1.0
@@ -541,12 +522,6 @@ class CloudgripperMuJoCoCube(CloudgripperMuJoCoEnv):
             close = grip
 
         if phase == "rise":
-            # Z-only move to transit_height, holding the robot's current
-            # x/y/rot in place — guarantees the arm is clear of any cube
-            # before "approach" starts moving horizontally, instead of
-            # racing XY and Z simultaneously from a random start height
-            # (measured real failure: starting low, the arm could still
-            # be below a cube's top while already passing over it).
             return np.array([*self._target_pos[:2], transit_height, self._target_pos[3], open])
         elif phase == "approach":
             xy = ik(pos, rot_norm, open)[:2]
