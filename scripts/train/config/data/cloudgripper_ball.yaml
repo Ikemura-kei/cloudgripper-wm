@@ -1,0 +1,16 @@
+dataset:
+  num_steps: ${eval:'${wm.num_preds} + ${wm.history_size}'}
+  frameskip: 1
+  # Absolute path — the collected dataset lives under the repo-local
+  # .stable_worldmodel/ (not ~/.stable_worldmodel), and load_dataset() only
+  # skips its cache-dir prefix for absolute paths (see _resolve_dataset in
+  # stable_worldmodel/data/utils.py). ${hydra:runtime.cwd} is the directory
+  # Hydra was launched from, regardless of hydra.job.chdir.
+  name: ${hydra:runtime.cwd}/.stable_worldmodel/datasets/cloudgripper_mj_ball.lance
+  keys_to_load:
+    - pixels
+    - action
+    - state
+  keys_to_cache:
+    - action
+    - state

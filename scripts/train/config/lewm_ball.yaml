@@ -1,0 +1,111 @@
+# LeWM on the ball dataset (see environments/cloudgripper_mj/cloudgripper_mj_ball.py).
+#
+# The data is collected at 448 and training downsamples to img_size below.
+# What governs how slow a ball still reads as moving is the displacement across
+# the whole context, (history_size - 1) * 0.139 * speed * img_size px — so
+# resolution and history trade off against each other, and history is the
+# cheaper lever (see wm.history_size).
+
+defaults:
+  - _self_
+  - launcher: local
+  - data: cloudgripper_ball
+
+output_model_name: lewm_ball
+subdir: ${hydra:job.id}
+
+num_workers: 7
+train_split: 0.9
+# Checkpoints are ~70 MB each; every 10th epoch keeps the run under a GB.
+# (The final epoch is always saved regardless.)
+ckpt_every: 10
+seed: 3072
+img_size: 336
+patch_size: 14
+encoder_scale: tiny
+embed_dim: 192
+encoder_resnet9: False
+train_value_function: False
+projector_loss_weight: 1e-3
+dump_object: True
+
+trainer:
+  max_epochs: 100
+  devices: auto
+  accelerator: gpu
+  precision: bf16
+  gradient_clip_val: 1.0
+
+loader:
+  # 32, not 128: each sample is 7 frames x 576 tokens here, and a comparable
+  # token count at 448 already OOM'd a 16 GB card at batch 64 (measured).
+  batch_size: 32
+  num_workers: ${num_workers}
+  drop_last: True
+  pin_memory: True
+  shuffle: True
+
+optimizer:
+  type: AdamW
+  lr: 5e-5
+  weight_decay: 1e-3
+
+wm:
+  # 6, not 3. Velocity has to be read out of the context, and the displacement
+  # across it is (history_size - 1) * 0.139 * speed * img_size px. Tokens per
+  # sample scale as (history_size + num_preds) * (img_size/14)^2 — linear in
+  # history but quadratic in resolution, so context frames are the cheaper way
+  # to buy velocity signal. 6 frames at 336 carry ~1.9x the signal of 3 frames
+  # at 448 for the same token count; at the hardest band (OOD-slow, 0.028 m/s)
+  # that is 6.5 px of travel across the context instead of 3.5.
+  history_size: 6
+  num_preds: 1
+
+model:
+  _target_: stable_worldmodel.wm.lewm.LeWM
+  encoder:
+    _target_: stable_pretraining.backbone.utils.vit_hf
+    size: ${encoder_scale}
+    patch_size: ${patch_size}
+    image_size: ${img_size}
+    pretrained: false
+    use_mask_token: false
+  predictor:
+    _target_: stable_worldmodel.wm.lewm.module.Predictor
+    num_frames: ${wm.history_size}
+    input_dim: ${embed_dim}
+    hidden_dim: ${embed_dim}
+    output_dim: ${embed_dim}
+    depth: 6
+    heads: 16
+    mlp_dim: 2048
+    dim_head: 64
+    dropout: 0.1
+    emb_dropout: 0.0
+  action_encoder:
+    _target_: stable_worldmodel.wm.lewm.module.Embedder
+    input_dim: ???
+    emb_dim: ${embed_dim}
+  projector:
+    _target_: stable_worldmodel.wm.lewm.module.MLP
+    input_dim: ${embed_dim}
+    output_dim: ${embed_dim}
+    hidden_dim: 2048
+    norm_fn:
+      _target_: torch.nn.BatchNorm1d
+      _partial_: true
+  pred_proj:
+    _target_: stable_worldmodel.wm.lewm.module.MLP
+    input_dim: ${embed_dim}
+    output_dim: ${embed_dim}
+    hidden_dim: 2048
+    norm_fn:
+      _target_: torch.nn.BatchNorm1d
+      _partial_: true
+
+loss:
+  sigreg:
+    weight: 0.09
+    kwargs:
+      knots: 17
+      num_proj: 1024
