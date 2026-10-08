@@ -12,8 +12,8 @@ import stable_worldmodel as swm
 import torch
 from lightning.pytorch.loggers import WandbLogger
 from omegaconf import OmegaConf, open_dict
+from torch.utils.data import Subset
 
-from functools import partial
 from stable_worldmodel.data import column_normalizer as get_column_normalizer
 from stable_worldmodel.wm.loss import SIGReg
 from lightning.pytorch.callbacks import Callback
@@ -73,9 +73,51 @@ class SaveCkptCallback(Callback):
         )
 
 
-def lejepa_forward(self, batch, stage, cfg):
+def split_by_episode(dataset, train_frac: float, generator):
+    """Split a dataset's clip windows into train/val by *episode*.
+
+    Splitting the dataset directly (e.g. with random_split) splits its clip
+    windows, and consecutive windows overlap by span-1 frames — so windows
+    from one episode land on both sides and the val set scores frames the
+    model trained on. With 500 ball episodes that left every single episode
+    represented in training, making the val loss a near-training metric that
+    could not reveal memorisation. Splitting whole episodes instead means no
+    val episode is seen during training at all.
+
+    Always leaves at least one episode on each side, so train_frac=1.0 still
+    produces a usable (if token) validation set rather than an empty loader.
+
+    Args:
+        dataset: dataset exposing ``clip_indices`` as (episode, start) pairs.
+        train_frac: fraction of *episodes* used for training.
+        generator: torch Generator, for a reproducible episode permutation.
+
+    Returns:
+        (train_subset, val_subset)
+    """
+    clip_eps = [ep for ep, _ in dataset.clip_indices]
+    episodes = sorted(set(clip_eps))
+
+    perm = torch.randperm(len(episodes), generator=generator).tolist()
+    n_train = int(round(train_frac * len(episodes)))
+    n_train = max(1, min(n_train, len(episodes) - 1))
+    train_eps = {episodes[i] for i in perm[:n_train]}
+
+    train_idx = [i for i, ep in enumerate(clip_eps) if ep in train_eps]
+    val_idx = [i for i, ep in enumerate(clip_eps) if ep not in train_eps]
+
+    print(
+        f'Episode-level split: {n_train}/{len(episodes)} episodes to train '
+        f'({len(train_idx)} windows), {len(episodes) - n_train} to val '
+        f'({len(val_idx)} windows)'
+    )
+    return Subset(dataset, train_idx), Subset(dataset, val_idx)
+
+
+def lejepa_forward(self, batch, stage):
     """encode observations, predict next states, compute losses."""
 
+    cfg = self._lewm_cfg
     ctx_len = cfg.wm.history_size
     n_preds = cfg.wm.num_preds
     lambd = cfg.loss.sigreg.weight
@@ -149,13 +191,15 @@ def train(cfg):
     dataset.transform = transform
 
     rnd_gen = torch.Generator().manual_seed(cfg.seed)
-    train_set, val_set = spt.data.random_split(
-        dataset,
-        lengths=[cfg.train_split, 1 - cfg.train_split],
-        generator=rnd_gen,
-    )
+    train_set, val_set = split_by_episode(dataset, cfg.train_split, rnd_gen)
 
-    mp_ctx = {'multiprocessing_context': 'fork'} if cfg.loader.num_workers > 0 else {}
+    # 'spawn', not 'fork': the dataset (e.g. LanceDataset) may already have
+    # started lancedb's internal background threads by this point, and
+    # lancedb is fork-unsafe (see _force_spawn() in
+    # stable_worldmodel/data/formats/lance.py) — forking leaves locks those
+    # threads held stuck in the child, hanging the first worker to read a
+    # row. Only matters once num_workers > 0 actually spawns workers.
+    mp_ctx = {'multiprocessing_context': 'spawn'} if cfg.loader.num_workers > 0 else {}
     train = torch.utils.data.DataLoader(
         train_set,
         **cfg.loader,
@@ -191,9 +235,16 @@ def train(cfg):
     world_model = spt.Module(
         model=world_model,
         sigreg=SIGReg(**cfg.loss.sigreg.kwargs),
-        forward=partial(lejepa_forward, cfg=cfg),
+        # Plain function reference, not a functools.partial: spt.Module
+        # installs this via `types.MethodType(forward, self)`
+        # (stable_pretraining/module.py), which under 'spawn' multiprocessing
+        # (see mp_ctx below) needs to pickle `m.__func__` as a named,
+        # importable function — a partial has no __name__ and breaks that.
+        # cfg is attached to the instance below instead of bound via partial.
+        forward=lejepa_forward,
         optim=optimizers,
     )
+    world_model._lewm_cfg = cfg
 
     ##########################
     ##       training       ##
@@ -213,10 +264,13 @@ def train(cfg):
     with open(run_dir / 'config.yaml', 'w') as f:
         OmegaConf.save(cfg, f)
 
+    # Every epoch by default (unchanged), but each checkpoint is ~70 MB, so a
+    # few hundred epochs is several GB — set ckpt_every in the config to thin
+    # them out. The final epoch is always saved regardless of the interval.
     object_dump_callback = SaveCkptCallback(
         run_name=cfg.output_model_name,
         cfg=cfg,
-        epoch_interval=1,
+        epoch_interval=cfg.get('ckpt_every', 1),
     )
 
     trainer = pl.Trainer(
