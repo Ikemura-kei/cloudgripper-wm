@@ -1,0 +1,40 @@
+defaults:
+  - cloudgripper_mj
+  - _self_
+
+# output
+output: .stable_worldmodel/datasets/
+output_name: cloudgripper_mj_ball
+
+# The ball env ignores actions (the arm is frozen), so the policy only fills
+# the action column the training pipeline expects — any policy works.
+policy:
+  _target_: stable_worldmodel.policy.RandomPolicy
+
+world:
+  # 448 = 32 x the ViT's patch size 14, so training can run at this resolution
+  # with no downsampling. Resolution sets how slow a ball is still visibly
+  # moving: per-frame displacement is 0.139 * speed * S px at model input size
+  # S, so the slowest perceptible speed (~1.5 px/frame) is 0.048 m/s at S=224
+  # but 0.024 m/s at S=448. The fast end does not benefit — displacement and
+  # ball size both scale with S, so frames stop overlapping above ~0.29 m/s
+  # at any resolution.
+  width: 448
+  height: 448
+  image_shape: [448, 448]  # (height, width)
+
+  # Each episode ends itself when the ball finishes its crossing. The slowest
+  # band collected (0.028 m/s, OOD-slow) needs 164 steps; this is the safety
+  # net above that. The collection script refuses to start if speed_range
+  # would need more steps than this.
+  max_episode_steps: 250
+
+  # In-distribution band. Override for the OOD evaluation sets, e.g.
+  # world.speed_range=[0.028,0.040] (slow) or [0.22,0.28] (fast).
+  speed_range: [0.045, 0.20]
+
+# Which parts of the env's variation_space to resample each episode. Left as
+# null, the env falls back to CloudgripperMuJoCoBall.DEFAULT_VARIATIONS, i.e.
+# speed only — the ball stays red. Set to e.g. [ball.speed,ball.color] to vary
+# the colour too.
+variation: null
