@@ -71,7 +71,7 @@ echo "arch=${ARCH} uv=${UV_BIN} venv=${UV_PROJECT_ENVIRONMENT}"
 # inside training, if the dataset was never copied over from wherever it was
 # collected (data collection and training don't have to run on the same
 # machine, but the dataset file does have to physically be here first).
-dataset_path="${SLURM_SUBMIT_DIR}/.stable_worldmodel/datasets/tracking.lance"
+dataset_path="${SLURM_SUBMIT_DIR}/.stable_worldmodel/datasets/cloudgripper_mj_cube_variation.lance"
 if [ ! -d "${dataset_path}" ]; then
     echo "ERROR: dataset not found at ${dataset_path}" >&2
     echo "Copy it over (e.g. rsync -av from wherever it was collected) before submitting." >&2
