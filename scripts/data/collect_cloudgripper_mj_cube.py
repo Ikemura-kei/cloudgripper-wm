@@ -20,23 +20,19 @@ import stable_worldmodel as swm
 from loguru import logger as logging
 from omegaconf import DictConfig
 from hydra.utils import instantiate
-from helpers import _lance_path, _count_existing_episodes, _check_config_compatibility, _save_config, _collect_materialized
+from helpers import _dataset_path, _count_existing_episodes, _check_config_compatibility, _save_config, _collect_materialized
 
 import environments.cloudgripper_mj  # noqa: F401  (triggers gymnasium registration)
 
 
 @hydra.main(version_base=None, config_path='./config', config_name='cloudgripper_mj_cube')
 def run(cfg: DictConfig) -> None:
-    lance_out = _lance_path(cfg.output, cfg.output_name)
+    format = 'video' if cfg.as_video else 'lance'
+    lance_out = _dataset_path(cfg.output, cfg.output_name, format)
 
-    format = 'lance'
-    if cfg.as_video:
-        format = "video"
-        lance_out += f"_{format}" 
-
-    n_existing = _count_existing_episodes(cfg.output, cfg.output_name)
+    n_existing = _count_existing_episodes(cfg.output, cfg.output_name, format)
     if n_existing > 0:
-        _check_config_compatibility(cfg, cfg.output)
+        _check_config_compatibility(cfg, cfg.output, cfg.output_name, format)
     to_collect = max(0, cfg.episodes - n_existing)
 
     if n_existing > 0:
@@ -49,8 +45,21 @@ def run(cfg: DictConfig) -> None:
         logging.info('Target episode count already reached, nothing to collect.')
         return
 
-    seed_start = cfg.seed + n_existing
-    _save_config(cfg, cfg.output, cfg.output_name)
+    # A chunk consumes more seeds than the `chunk` episodes it stores: World's
+    # rollout seeds one episode per env up front, then — once episodes end at
+    # different times, which per-env early truncation makes the norm — resets
+    # each finished env with the *next* seed in the sequence and starts
+    # another episode. Stepping the cursor by `chunk` would hand the next
+    # chunk a seed the previous one already drew from, duplicating a whole
+    # episode's variation. Step past every seed a chunk could touch instead
+    # (num_envs initial + at most one per episode it stores), and derive the
+    # resume point from chunks already done so the same holds across runs
+    # (num_envs can't change on resume — _check_config_compatibility rejects
+    # that).
+    seed_stride = 2 * cfg.num_envs
+    chunks_done = -(-n_existing // cfg.num_envs)  # ceil
+    seed_cursor = cfg.seed + chunks_done * seed_stride
+    _save_config(cfg, cfg.output, cfg.output_name, format)
 
     variation = cfg.get('variation', None)
     options = {'variation': list(variation)} if variation is not None else None
@@ -71,11 +80,11 @@ def run(cfg: DictConfig) -> None:
         collected = 0
         while collected < to_collect:
             chunk = min(cfg.num_envs, to_collect - collected)
-            seed = seed_start + collected
             if hasattr(policy, 'reset'):
                 policy.reset()
-            _collect_materialized(world, path=lance_out, episodes=chunk, seed=seed, format=format, options=options)
+            _collect_materialized(world, path=lance_out, episodes=chunk, seed=seed_cursor, format=format, options=options)
             collected += chunk
+            seed_cursor += seed_stride
             logging.info(
                 f'Collected {n_existing + collected}/{cfg.episodes} episodes → {lance_out}'
             )
