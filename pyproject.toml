@@ -28,3 +28,13 @@ build-backend = "hatchling.build"
 [tool.uv.sources]
 cloudgripper-api = { path = "third_party/cloudgripper-api", editable = true }
 stable-worldmodel = { path = "third_party/stable-worldmodel", editable = true }
+
+[tool.uv]
+# gymnasium[all] (pulled in via stable-worldmodel[env]) depends on box2d,
+# which has no wheel or sdist for linux/aarch64 (e.g. NAISS Arrhenius's
+# GH200 GPU nodes) — `uv sync` hard-fails there otherwise. Box2D-based envs
+# (LunarLander etc.) aren't used by this project, so it's safe to drop the
+# requirement specifically on that platform rather than everywhere.
+override-dependencies = [
+    "box2d; sys_platform != 'linux' or platform_machine != 'aarch64'",
+]
