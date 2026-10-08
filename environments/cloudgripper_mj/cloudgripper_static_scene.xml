@@ -1,0 +1,128 @@
+<mujoco>
+<!--
+  CloudGripper cell with no robot arm: cage frame, ground plate, walls, LED
+  strips and cameras only — none of the moving parts (rail/slider, arm,
+  gripper, servos) and therefore none of their actuators or equality
+  constraints either.
+
+  Derived from cloudgripper_scene.xml, which stays the scene for the tasks
+  that actually drive the robot. This one exists for passive scenes where the
+  arm would only be a static distractor (see cloudgripper_mj_ball.py).
+
+  Two deliberate differences from cloudgripper_scene.xml:
+    - the ROBOT ARM subtree, the actuator and equality blocks, and the arm's
+      mesh assets are all gone;
+    - glass_floor is opaque (alpha 1 rather than 0.25), so the plate reads as
+      solid ground rather than showing the cage structure through it.
+-->
+  <compiler meshdir="./mesh" balanceinertia="true" inertiafromgeom="true"/>
+  <!-- elliptic (not the default pyramidal) friction cone: the pyramidal
+       approximation underestimates available friction in oblique
+       directions, especially with condim=6 (normal + sliding + torsional
+       + rolling) contacts like the cube-finger grip — measured directly:
+       switching to elliptic alone took small-cube (10-12mm) grasp success
+       from 0/5 to 4/5 on a fixed seed set, with no other change. Grip
+       force/stiffness (kp) and raw friction magnitude were ruled out
+       first (scaling either up to 8x made no difference or made things
+       worse) — this was a solver-accuracy issue, not a force one. -->
+  <option cone="elliptic"/>
+  <visual>
+    <headlight active="1"/>
+  </visual>
+  <default>
+    <joint damping="0.1" armature="0.01"/>
+
+    <!-- STANDARD PHYSICAL GEOMS (default) -->
+    <!-- <geom contype="1" conaffinity="1"type="mesh"/> -->
+
+    <!-- VISUAL ONLY GEOMS Class -->
+    <default class="visual_mesh">
+      <geom contype="0" conaffinity="0" group="1"/>
+    </default>
+  </default>
+  
+  <asset>
+    <material name="glass_floor" rgba="1 1 1 1" shininess="0.9" specular="0.8" reflectance="0.8"/>
+    <material name="gray_mat" rgba="0.87294 0.95294 0.87294 1"/>
+    <material name="led_light" rgba="1 1 1 1" emission="1.0" specular="0.0" reflectance="0.0"/>
+    <material name="yellow_plastic" rgba="1.0 0.8 0.15 1" specular="0.4" shininess="0.4"/>
+    <material name="black_plastic" rgba="0.0 0.0 0.0 1" specular="0.4" shininess="0.4"/>
+    <material name="seethrough_plastic" rgba="1.0 1.0 1.0 0.3" specular="0.4" shininess="0.4"/>
+    <material name="metal" rgba="0.8 0.8 0.8 1" specular="1.0" shininess="0.9" metallic="1.0" />
+  </asset>
+
+
+
+  <worldbody>
+    
+    <body name="Ground_plate" pos="0.0 0.0 0.0" quat="1.0 0.0 0.0 0.0" >
+      <geom type="mesh" name="Ground_plate geom" mesh="Ground_plate" material="glass_floor"  />
+    </body>
+
+    <!-- BOX  -->
+    <body name="wall_front" pos="-0.16111600399017334 -0.0015206336975097656 0.0425376296043396" quat="0.5000000596046448 0.5 -0.4999999403953552 -0.5" >
+      <geom type="mesh" name="wall_front geom" mesh="wall_front" material="gray_mat" />
+    </body>
+    <body name="wall_back" pos="0.18656843900680542 -0.0015206336975097656 0.0425376296043396" quat="0.5000000596046448 0.5 -0.4999999403953552 -0.5" >
+      <geom type="mesh" name="wall_back geom" mesh="wall_back" material="gray_mat" />
+    </body>
+    <body name="wall_right" pos="-0.00011800229549407959 0.13448134064674377 0.0425376296043396" quat="0.7071068286895752 0.7071067690849304 -1.5454309831852697e-08 -1.5454309831852697e-08" >
+      <geom type="mesh" name="wall_right geom" mesh="wall_right" material="gray_mat" />
+    </body>
+    <body name="wall_left" pos="-0.00011804699897766113 -0.13751864433288574 0.0425376296043396" quat="0.7071068286895752 0.7071067690849304 -1.5454308055495858e-08 -1.5454311608209537e-08" >
+      <geom type="mesh" name="wall_left geom" mesh="wall_left" material="gray_mat" />
+    </body>
+    <body name="wall_top" pos="-0.00011800229549407959 -0.0015206634998321533 0.2546866536140442" quat="6.883879422048267e-08 -0.7071068286895752 0.7071067690849304 -3.7931361163145993e-08" >
+      <geom type="mesh" name="wall_top geom" mesh="wall_top" material="gray_mat" />
+    </body>
+
+    <!-- LIGHTS -->
+    <body name="wall_right_light_upper" pos="-0.00011800229549407959 0.1334783434867859 0.0985376387834549" quat="0.7071068286895752 0.7071067690849304 -1.5454309831852697e-08 -1.5454309831852697e-08" >
+      <geom type="mesh" name="wall_right_light_upper geom" mesh="wall_right_light_upper" material="led_light"/>
+      <light name="led_right_upper1" pos="0 0 0" dir="0 0 1" diffuse="1.5 1.5 1.5" attenuation="1 0.05 0.005" castshadow="false" />
+      <light name="led_right_upper2" pos="0.12 0 0" dir="0 0 1" diffuse="1.5 1.5 1.5" attenuation="1 0.05 0.005" castshadow="false" />
+      <light name="led_right_upper3" pos="-0.12 0 0" dir="0 0 1" diffuse="1.5 1.5 1.5" attenuation="1 0.05 0.005" castshadow="false" />
+    </body>
+    <body name="wall_right_light_lower" pos="-0.00011800229549407959 0.1334783434867859 0.05853763222694397" quat="0.7071068286895752 0.7071067690849304 -1.5454309831852697e-08 -1.5454309831852697e-08" >
+      <geom type="mesh" name="wall_right_light_lower geom" mesh="wall_right_light_lower" material="led_light"/>
+      <light name="led_right_lower1" pos="0 0 0" dir="0 0 1" diffuse="1.5 1.5 1.5" attenuation="1 0.05 0.005" castshadow="false" />
+      <light name="led_right_lower2" pos="0.12 0 0" dir="0 0 1" diffuse="1.5 1.5 1.5" attenuation="1 0.05 0.005" castshadow="false" />
+      <light name="led_right_lower3" pos="-0.12 0 0" dir="0 0 1" diffuse="1.5 1.5 1.5" attenuation="1 0.05 0.005" castshadow="false" />
+    </body>
+    <body name="wall_left_light_upper" pos="-0.00011800229549407959 -0.13451865315437317 0.0985376387834549" quat="0.7071068286895752 0.7071067690849304 -1.5454309831852697e-08 -1.5454309831852697e-08" >
+      <geom type="mesh" name="wall_left_light_upper geom" mesh="wall_left_light_upper" material="led_light"/>
+      <light name="led_left_upper1" pos="0 0 0" diffuse="1.5 1.5 1.5"  attenuation="1 0.05 0.005" castshadow="false" />
+      <light name="led_left_upper2" pos="0.12 0 0" diffuse="1.5 1.5 1.5" attenuation="1 0.05 0.005" castshadow="false" />
+      <light name="led_left_upper3" pos="-0.12 0 0" diffuse="1.5 1.5 1.5" attenuation="1 0.05 0.005" castshadow="false" />
+    </body>
+    <body name="wall_left_light_lower" pos="-0.00011800229549407959 -0.13451865315437317 0.05853763222694397" quat="0.7071068286895752 0.7071067690849304 -1.5454309831852697e-08 -1.5454309831852697e-08" >
+      <geom type="mesh" name="wall_left_light_lower geom" mesh="wall_left_light_lower" material="led_light"  />
+      <light name="led_left_lower1" pos="0 0 0" diffuse="1.5 1.5 1.5" attenuation="1 0.05 0.005" castshadow="false" />
+      <light name="led_left_lower2" pos="0.12 0 0" diffuse="1.5 1.5 1.5" attenuation="1 0.05 0.005" castshadow="false" />
+      <light name="led_left_lower3" pos="-0.12 0 0" diffuse="1.5 1.5 1.5" attenuation="1 0.05 0.005" castshadow="false" />
+    </body>
+
+    <!-- ===== -->
+    <!-- FRAME -->
+    <!-- ===== -->
+    <body name="Frame" pos="0.0 0.0 0.0" quat="1.0 0.0 0.0 0.0" >
+      <geom class="visual_mesh" type="mesh" name="Frame geom" mesh="Frame" material="metal" />
+    </body>
+        
+    <camera name="Camera_bottom" pos="0.011877432465553284 -0.01152026653289795 -0.1274629384279251" quat="0 1 1 0" fovy="90" />
+    <camera name="Camera_main" pos="0.14519381523132324 -0.0004741400480270386 0.12123201787471771" quat="0.607417 0.361999 0.361999 0.607417" fovy="90" />
+  </worldbody>
+  <asset>
+    <mesh name="Frame" file="Frame.stl"/>
+    <mesh name="Ground_plate" file="Ground_plate.stl"/>
+    <mesh name="wall_front" file="wall_front.stl"/>
+    <mesh name="wall_back" file="wall_back.stl"/>
+    <mesh name="wall_right" file="wall_right.stl"/>
+    <mesh name="wall_left" file="wall_left.stl"/>
+    <mesh name="wall_top" file="wall_top.stl"/>
+    <mesh name="wall_right_light_upper" file="wall_right_light_upper.stl"/>
+    <mesh name="wall_right_light_lower" file="wall_right_light_lower.stl"/>
+    <mesh name="wall_left_light_upper" file="wall_left_light_upper.stl"/>
+    <mesh name="wall_left_light_lower" file="wall_left_light_lower.stl"/>
+  </asset>
+</mujoco>
