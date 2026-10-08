@@ -20,3 +20,11 @@ data/*/
 data/*.zip
 
 misc/
+# collected datasets and training checkpoints (large, machine-local)
+.stable_worldmodel/
+datasets/
+
+# dumped per-run by stable_pretraining's EnvironmentDumpCallback
+lightning_logs/
+environment*.json
+requirements_frozen*.txt
