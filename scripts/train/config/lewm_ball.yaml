@@ -14,11 +14,18 @@ defaults:
 output_model_name: lewm_ball
 subdir: ${hydra:job.id}
 
-num_workers: 7
+# 2, not 7: each in-flight batch is 32 x 7 frames x 3 x 336 x 336 float32
+# (~300 MB), and workers hand batches to the main process through shared
+# memory, so 7 workers x prefetch 2 held ~14.6 GB in /dev/shm — enough to get
+# the run OOM-killed when anything else sizeable was on the machine.
+num_workers: 2
 train_split: 0.9
 # Checkpoints are ~70 MB each; every 10th epoch keeps the run under a GB.
 # (The final epoch is always saved regardless.)
 ckpt_every: 10
+# Path to a lightning_logs/version_*/checkpoints/*.ckpt to continue a run from
+# (restores optimizer and LR schedule, not just weights). null starts fresh.
+resume_from: null
 seed: 3072
 img_size: 336
 patch_size: 14
@@ -42,7 +49,7 @@ loader:
   batch_size: 32
   num_workers: ${num_workers}
   drop_last: True
-  pin_memory: True
+  pin_memory: False  # avoids a second, page-locked copy of every batch
   shuffle: True
 
 optimizer:
