@@ -73,6 +73,98 @@ class SaveCkptCallback(Callback):
         )
 
 
+def _memory_budget_bytes():
+    """RAM we are actually allowed, honouring a SLURM/cgroup cap if present."""
+    budget = None
+    try:
+        for line in open('/proc/meminfo'):
+            if line.startswith('MemAvailable'):
+                budget = int(line.split()[1]) * 1024
+                break
+    except OSError:
+        pass
+    for path in ('/sys/fs/cgroup/memory.max',
+                 '/sys/fs/cgroup/memory/memory.limit_in_bytes'):
+        try:
+            raw = open(path).read().strip()
+        except OSError:
+            continue
+        if raw and raw != 'max':
+            cap = int(raw)
+            if 0 < cap < (1 << 60):  # cgroup v1 writes a sentinel when uncapped
+                budget = cap if budget is None else min(budget, cap)
+    return budget
+
+
+def check_loader_memory(cfg, dataset, fraction: float = 0.6):
+    """Refuse to start if the dataloader's in-flight batches will not fit in RAM.
+
+    A sample here is several frames, not one image, so batches are much larger
+    than in ordinary vision training, and with num_workers > 0 roughly
+    num_workers * prefetch_factor of them are resident at once — each copied
+    between the worker, shared memory and the main process. Two runs were
+    killed mid-training by this (one local at 14.6 GB resident, one cluster
+    job against a 32 GB --mem cap), both after the queue wait and several
+    minutes of training, which is an expensive way to learn the number.
+
+    The per-sample size is measured from a real sample rather than derived, so
+    it accounts for whatever the transform actually produces.
+    """
+    def _bytes(sample, as_float32=False):
+        total = 0
+        for v in sample.values():
+            if isinstance(v, torch.Tensor):
+                n, size = v.numel(), v.element_size()
+            elif hasattr(v, 'nbytes') and hasattr(v, 'dtype'):  # numpy
+                n, size = v.size, v.itemsize
+            else:
+                continue
+            total += n * (4 if as_float32 and size == 1 else size)
+        return total
+
+    per_sample = _bytes(dataset[0])
+    # Peak is not the transformed sample: images are converted to float32 at
+    # their *stored* resolution and only then resized, so a dataset stored
+    # larger than img_size peaks well above its final size. The cube set is
+    # stored at 480 and trained at 224 — 1.32 GB per batch mid-transform
+    # against 0.29 GB after it, which is what a post-transform-only estimate
+    # misses (and why a 32 GB cluster job died while the estimate said 15.6).
+    tf = getattr(dataset, 'transform', None)
+    if tf is not None:
+        try:
+            dataset.transform = None
+            per_sample = max(per_sample, _bytes(dataset[0], as_float32=True))
+        except Exception:
+            pass
+        finally:
+            dataset.transform = tf
+    workers = int(cfg.loader.num_workers)
+    prefetch = int(cfg.loader.get('prefetch_factor', 2) or 2)
+    # 3x: measured. 7 workers x prefetch 2 on a 303 MB batch predicts 4.2 GB,
+    # resident was 14.6 GB — the gap is the worker -> shm -> main copies, plus
+    # a page-locked duplicate when pin_memory is on.
+    in_flight = max(1, workers * prefetch) * (3.0 if workers else 1.0)
+    per_batch = per_sample * int(cfg.loader.batch_size)
+    # each spawned worker is a fresh interpreter with torch imported
+    overhead = workers * 0.5 * 1024 ** 3
+    estimate = per_batch * in_flight + overhead
+
+    budget = _memory_budget_bytes()
+    gb = 1024 ** 3
+    print(
+        f'loader memory estimate: {per_batch/gb:.2f} GB/batch x {in_flight:.0f} in flight '
+        f'+ {overhead/gb:.1f} GB worker overhead = {estimate/gb:.1f} GB'
+        + (f' (budget {budget/gb:.1f} GB)' if budget else ' (budget unknown)')
+    )
+    if budget and estimate > fraction * budget:
+        raise MemoryError(
+            f'dataloader needs ~{estimate/gb:.1f} GB but only {budget/gb:.1f} GB is available. '
+            f'Lower loader.num_workers (currently {workers}) or loader.batch_size '
+            f'(currently {cfg.loader.batch_size}), or request more memory '
+            f'(--mem on SLURM). Set fraction higher only if you know the estimate is pessimistic.'
+        )
+
+
 def split_by_episode(dataset, train_frac: float, generator):
     """Split a dataset's clip windows into train/val by *episode*.
 
@@ -190,6 +282,8 @@ def train(cfg):
     transform = spt.data.transforms.Compose(*transforms)
     dataset.transform = transform
 
+    check_loader_memory(cfg, dataset)
+
     rnd_gen = torch.Generator().manual_seed(cfg.seed)
     train_set, val_set = split_by_episode(dataset, cfg.train_split, rnd_gen)
 
@@ -281,7 +375,21 @@ def train(cfg):
         enable_checkpointing=True,
     )
 
-    ckpt_path = run_dir / f'{cfg.output_model_name}_weights.ckpt'
+    # Lightning writes full training state — weights, optimizer, LR scheduler
+    # and epoch/step counters — to lightning_logs/version_*/checkpoints/*.ckpt.
+    # The fallback path below can never match one: output_model_name has a
+    # fresh timestamp appended at the top of this function, so .exists() is
+    # always False and a crashed run silently restarted from epoch 0. Point
+    # resume_from at such a .ckpt to actually continue one; dataloaders are
+    # rebuilt from the current config either way, so loader settings changed
+    # since the checkpoint (e.g. num_workers) still take effect.
+    resume_from = cfg.get('resume_from', None)
+    ckpt_path = (
+        Path(resume_from) if resume_from
+        else run_dir / f'{cfg.output_model_name}_weights.ckpt'
+    )
+    if resume_from and not ckpt_path.is_file():
+        raise FileNotFoundError(f'resume_from={resume_from} does not exist')
     manager = spt.Manager(
         trainer=trainer,
         module=world_model,
