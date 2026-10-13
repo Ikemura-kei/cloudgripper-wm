@@ -157,6 +157,47 @@ def derived_speed(scaler, reg, d, H):
     return (at(H - 1) - at(H - 2)) / CONTROL_DT
 
 
+def predictor_step_check(probes, data, H):
+    """Ask the predictor's output where the ball is, in metres.
+
+    Probing the predictor for *speed* is not comparable to probing the encoder
+    for speed: the encoder probe is fed a difference of two embeddings, which
+    cancels everything static, while the predictor's output is a single
+    embedding that must carry motion implicitly. The fair question is the one
+    the predictor is actually trained to answer -- advance the state one step --
+    so decode its output with the position probe and compare against where the
+    ball truly went.
+
+    The predictor operates on projected embeddings, so this uses the position
+    probe fitted on `proj`, and reports the encoder's own reading of the same
+    frame as the baseline that separates predictor error from probe error.
+    """
+    scaler, reg = probes['position [proj]']
+    read = lambda e: reg.predict(scaler.transform(e))
+
+    print('\n=== one-step prediction, measured in metres ===')
+    print('   "encoder" reads the true next frame; "predictor" reads its own '
+          'forecast of it')
+    print(f"{'set':10s} {'encoder err':>13s} {'predictor err':>14s} "
+          f"{'pred. bias':>12s} {'true step':>11s} {'step err':>10s}")
+    out = {}
+    for label, d in data.items():
+        truth = d['pos'][:, H, TRAVEL_AXIS]          # where the ball actually is
+        enc = read(d['emb'][:, H])                   # encoder's reading of it
+        pred = read(d['pred'])                       # predictor's forecast of it
+        # how far the predictor thinks the ball moved, vs how far it did
+        step_pred = pred - read(d['emb'][:, H - 1])
+        step_true = d['speed'] * CONTROL_DT
+        out[label] = dict(enc=enc, pred=pred, truth=truth,
+                          step_pred=step_pred, step_true=step_true)
+        print(f'{label:10s} {np.mean(np.abs(enc - truth)) * 1000:10.2f} mm '
+              f'{np.mean(np.abs(pred - truth)) * 1000:11.2f} mm '
+              f'{np.mean(pred - truth) * 1000:+9.2f} mm '
+              f'{np.mean(step_true) * 1000:8.2f} mm '
+              f'{np.mean(step_pred - step_true) * 1000:+7.2f} mm')
+    return out
+
+
 def make_plots(results, data, derived, H, out):
     """Parity plots: the two estimators that are worth looking at."""
     order = list(data)
@@ -281,9 +322,12 @@ def main():
           f'{floor:.4f} m/s, averaged over {H - 1} displacements '
           f'{floor / np.sqrt(H - 1):.4f} m/s')
 
+    step = predictor_step_check(probes, data, H)
     make_plots(results, data, derived, H, args.out)
 
     np.savez(os.path.join(args.out, 'probe_results.npz'),
+             **{f'step|{s}|{m}': v[m]
+                for s, v in step.items() for m in v},
              **{f'derived|{s}': v for s, v in derived.items()},
              **{f'{k}|{s}|{m}': v[s][m]
                 for k, v in results.items() for s in v for m in ('pred',)},
