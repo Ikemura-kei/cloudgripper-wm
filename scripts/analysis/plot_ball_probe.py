@@ -6,7 +6,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
-from sklearn.linear_model import RidgeCV
+from sklearn.neighbors import KNeighborsRegressor
 from sklearn.preprocessing import StandardScaler
 
 AX, SETS = 1, ['train', 'held-out', 'OOD-slow', 'OOD-fast']
@@ -44,12 +44,17 @@ def main():
     args = ap.parse_args()
     d, H = np.load(args.cache), args.history
 
-    # one probe, fitted on training frames only, pooled over all frame indices
+    # Readout fitted on training frames only, pooled over all frame indices.
+    # It must be NONLINEAR: in the projected space only 4% of the embedding's
+    # variation is linear in position while 84% is some smooth function of it,
+    # so a linear probe measures mostly the 4% and badly understates what the
+    # representation holds. k-NN makes no functional assumption at all.
     E, P = d['train|proj'], d['train|pos'][:, :, AX]
     x = E.reshape(-1, E.shape[-1])
     sc = StandardScaler().fit(x)
-    rg = RidgeCV(alphas=np.logspace(-3, 5, 30)).fit(sc.transform(x), P.reshape(-1))
-    read = lambda e: rg.predict(sc.transform(e))
+    kn = KNeighborsRegressor(n_neighbors=8, weights='distance').fit(
+        sc.transform(x), P.reshape(-1))
+    read = lambda e: kn.predict(sc.transform(e))
 
     fig, axes = plt.subplots(2, 2, figsize=(12.5, 10.5), facecolor=SURF)
     rng = np.random.default_rng(0)
@@ -80,8 +85,8 @@ def main():
 
     style(c, 'C  One-step movement — should follow the dashed line',
           'how far the ball really moved (mm)', 'how far the model thinks it moved (mm)')
-    c.set_xlim(-2, 16), c.set_ylim(-40, 40)
-    c.plot([-2, 16], [-2, 16], color=INK2, ls='--', lw=1.2, zorder=4)
+    c.set_xlim(-1, 16), c.set_ylim(-1, 16)
+    c.plot([-1, 16], [-1, 16], color=INK2, ls='--', lw=1.2, zorder=4)
     c.annotate('large dots = average per dataset', xy=(.97, .05),
                xycoords='axes fraction', ha='right', fontsize=8, color=INK2)
 
