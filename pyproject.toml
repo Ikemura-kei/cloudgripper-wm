@@ -15,6 +15,7 @@ dependencies = [
     "ogbench",
     "opencv-python>=4.13.0.92",
     "pybase64>=1.4.3",
+    "pymunk>=7.3.0",
     "requests>=2.34.2",
     "scikit-learn>=1.7.2",
     "stable-worldmodel[env,train]",
