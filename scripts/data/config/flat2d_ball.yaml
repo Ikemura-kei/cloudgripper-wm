@@ -1,0 +1,92 @@
+defaults:
+  - _self_
+  - launcher: local
+
+hydra:
+  job:
+    chdir: false
+
+# output
+output: .stable_worldmodel/datasets/
+output_name: flat2d_ball
+
+# collect
+num_envs: 10
+episodes: 500
+seed: 42
+as_video: false
+
+# The scene ignores actions (nothing in it is actuated), so the policy only
+# fills the action column the training pipeline expects — any policy works.
+policy:
+  _target_: stable_worldmodel.policy.RandomPolicy
+  # Seeded so even the inert action column is reproducible across runs.
+  seed: 0
+
+world:
+  # Rendered at the resolution the model actually trains at, so nothing is
+  # rescaled between collection and training. Two reasons that matters:
+  # a bilinear downscale antialiases the ball's edge, which breaks the
+  # exactly-three-colours property the whole scene was built around; and the
+  # dataloader was converting 448 px frames to float32 before resizing them,
+  # which left the GPU idle 95% of the time.
+  width: 224
+  height: 224
+  image_shape: [224, 224]  # (height, width)
+
+  # Nearest-neighbour, so a resize can never blend the three colours into
+  # intermediate ones. A no-op while image_shape matches width/height.
+  image_resample: nearest
+
+  # Each episode ends itself when the ball finishes its crossing: 84 steps at
+  # the slowest in-distribution speed, 29 at the fastest. This is the safety
+  # net above that. The collection script refuses to start if speed_range
+  # would need more steps than this.
+  max_episode_steps: 120
+
+  # Speed band, in image widths per second. Chosen so the ball always overlaps
+  # itself between the frames the model relates. At frameskip 5 and a 47 px
+  # ball, 0.2 gives 27 px per step (0.6x the ball) and 0.45 gives 50 px
+  # (1.1x). That matches TwoRoom, where the agent moves 0.70x its own size per
+  # frameskip-5 step at the median and 1.07x at the 95th percentile (measured
+  # over 1500 random-action transitions). The previous top of 0.8 gave 1.8x,
+  # leaving a clean gap between consecutive positions.
+  speed_range: [0.2, 0.45]
+
+  # The three colours of the scene, RGB in 0-255. These are *fixed* colours,
+  # not sampled ones: overriding one consumes no variation draws, so two runs
+  # that share a seed and differ only here are identical episode for episode
+  # and frame for frame apart from the recoloured pixels. To sample a colour
+  # per episode instead, add it to `variation` below.
+  wall_color: [255, 255, 255]
+  floor_color: [0, 0, 0]
+  ball_color: [255, 0, 0]
+
+  # Optional discrete palette. When set, the ball's colour is drawn uniformly
+  # from this list per episode, overriding ball_color. The variation space's
+  # colour axis is a continuous Box, so it can hold one colour fixed or sample
+  # the whole cube, but cannot produce a dataset built from a named handful of
+  # colours — which is what a model meant to span colour space needs to see.
+  ball_colors: null
+
+  # Nothing in this scene is actuated, so the action space is collapsed to the
+  # single point 0 and the dataset's action column is constant. Set false to
+  # record uniform noise there instead (the old behaviour). Constant matters
+  # downstream: LeWM conditions every predictor block on the action embedding
+  # through AdaLN-zero, so a noise column makes the model spend capacity
+  # learning to ignore it, while a constant one z-scores to zeros.
+  zero_action: true
+
+  # Ball radius in world units (fractions of image width). 0.0525 is 1.5x the
+  # env default, giving a 47 px ball at 448 instead of 31 px. Two reasons:
+  # it occupies more ViT patches, and at frameskip 5 the ball moves 0.5-1.9
+  # of its own diameter per training step instead of 0.7-2.9, so consecutive
+  # context frames still overlap it at the fast end.
+  ball_radius: 0.0525
+
+# Which parts of the env's variation_space to resample each episode. Left as
+# null, the env falls back to Flat2DBall.DEFAULT_VARIATIONS, i.e. speed only —
+# so the dataset really does contain exactly three RGB colours. Set to e.g.
+# [ball.speed,ball.color] to vary the ball's colour too; wall.color and
+# floor.color are available the same way.
+variation: null

@@ -1,0 +1,26 @@
+dataset:
+  num_steps: ${eval:'${wm.num_preds} + ${wm.history_size}'}
+  # 5, matching the upstream LeWM configs for TwoRoom and PushT. At frameskip 1
+  # the ball advances only 5-18 px between the frames the model is asked to
+  # relate, which is 0.1-0.6 of its own diameter -- small enough that
+  # "predict almost no movement" is nearly optimal. Both ball studies used 1,
+  # inherited from the CloudGripper robot config where it was correct because
+  # robot data is already at action frequency. At 5 the ball moves 23-90 px per
+  # step, which cannot be fudged by copying.
+  frameskip: 5
+  # Absolute path — the collected dataset lives under the repo-local
+  # .stable_worldmodel/ (not ~/.stable_worldmodel), and load_dataset() only
+  # skips its cache-dir prefix for absolute paths (see _resolve_dataset in
+  # stable_worldmodel/data/utils.py). ${hydra:runtime.cwd} is the directory
+  # Hydra was launched from, regardless of hydra.job.chdir.
+  #
+  # ${dataset_name} is the one knob that picks which collected dataset this
+  # run trains on — see the parent config.
+  name: ${hydra:runtime.cwd}/.stable_worldmodel/datasets/${dataset_name}.lance
+  keys_to_load:
+    - pixels
+    - action
+    - state
+  keys_to_cache:
+    - action
+    - state

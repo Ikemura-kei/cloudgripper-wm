@@ -1,5 +1,6 @@
 
 from collections import defaultdict
+from typing import Any, Callable
 
 import lance
 import numpy as np
@@ -79,10 +80,17 @@ def _collect_materialized(
     seed: int,
     format: str = 'lance',
     options: dict | None = None,
+    writer_factory: Callable[[str], Any] | None = None,
 ) -> None:
     """Same rollout/write behavior as ``World.collect()``, except every
     episode is fully rolled out (and rendered) in the calling thread
     *before* any of it is handed to the writer.
+
+    ``writer_factory`` overrides how the writer is opened — pass a callable
+    taking the output path when the format's default writer is not what this
+    dataset needs (e.g. ``flat2d_ball``, whose frames must survive storage
+    byte-exact and so cannot go through the Lance writer's JPEG encoding).
+    Left as ``None``, the registered writer for ``format`` is used.
 
     ``options`` is forwarded to ``envs.reset()`` exactly like
     ``World.collect()``'s own ``options`` — e.g. ``{'variation': [...]}``
@@ -151,7 +159,8 @@ def _collect_materialized(
             pbar.update(1)
             all_episodes.append(ep)
 
-    with get_format(format).open_writer(path) as w:
+    open_writer = writer_factory or (lambda p: get_format(format).open_writer(p))
+    with open_writer(path) as w:
         w.write_episodes(all_episodes)
 
 

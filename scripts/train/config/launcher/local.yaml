@@ -3,7 +3,7 @@ defaults:
   - override /hydra/launcher: basic
 
 wandb:
-  enabled: false
+  enabled: true
   config:
     project: cloudgripper-wm
     name: ${output_model_name}

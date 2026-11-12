@@ -1,0 +1,174 @@
+# LeWM on the flat 2D ball dataset (see environments/flat2d/flat2d_ball.py).
+#
+# Everything here mirrors lewm_ball.yaml (the MuJoCo ball config) so results
+# from the two scenes are comparable; only the dataset, the names and the
+# resolution arithmetic in the comments differ.
+#
+# The data is collected at 448 and training downsamples to img_size below.
+# What governs how slow a ball still reads as moving is the displacement
+# across the whole context, (history_size - 1) * speed * 0.05 * img_size px
+# (the flat2d scene is defined in fractions of image width, so speed is in
+# widths/s and 0.05 s is the control timestep). At img_size 336 and the
+# in-distribution band that is 17-50 px of travel across the context, against
+# a ball 0.07 * 336 = 24 px across — ample at both ends.
+
+defaults:
+  - _self_
+  - launcher: local
+  - data: flat2d_ball
+
+# Which collected dataset to train on — the only thing that should differ
+# between the red and the green run. `seed` below is deliberately NOT derived
+# from it, so both runs share an initialisation and a shuffle order and the
+# dataset is the single variable between them.
+dataset_name: flat2d_ball_red
+
+# Carries dataset_name, so the two runs' checkpoints never land in the same
+# directory. train() additionally appends a timestamp and a random suffix.
+output_model_name: lewm_${dataset_name}
+
+# ${output_model_name}, not ${hydra:job.id}: job.id resolves to '' outside a
+# multirun sweep, which puts run_dir at the checkpoints root — so every run
+# writes its full resolved config to the same checkpoints/config.yaml and the
+# green run silently overwrites the red run's record. The per-model directory
+# is no fallback: save_pretrained is called with config_key='model', so its
+# config.json holds the architecture only, with no dataset_name, seed or
+# max_epochs in it. Interpolating output_model_name resolves *after* train()
+# appends the timestamp, so each run's config lands beside its own weights.
+subdir: ${output_model_name}
+
+# 6, matching TwoRoom. This was forced down to 2 while the datasets were
+# stored at 448 and resized in the loader: check_loader_memory sized the
+# budget off 448, so a batch cost 1.15 GB. Collecting natively at 224 brought
+# that to 0.29 GB, and 6 workers now estimates 18.5 GB against a 54 GB budget.
+num_workers: 6
+train_split: 0.9
+# Column to balance the train/val split across, or null for a plain random
+# split (the historical behaviour, and what every run before 2026-10-23 used).
+# Set to ball_color for a multi-colour dataset: a random split only balances in
+# expectation, and on the 3-colour set it left validation at 64/70/66.
+stratify_by: null
+# Every epoch: validation on this dataset is noisy enough that the final epoch
+# is not reliably the best one (measured on the first red run:
+# validate/pred_loss went 0.31, 0.21, 0.80, 0.22, 0.18 over epochs 12-16), and
+# a 30-epoch run needs enough candidates to tell a converged state from a
+# mid-wobble one. ~70 MB each, so 30 epochs is ~2.1 GB per model.
+# (The final epoch is always saved regardless.)
+ckpt_every: 5
+# Path to a lightning_logs/version_*/checkpoints/*.ckpt to continue a run from
+# (restores optimizer and LR schedule, not just weights). null starts fresh.
+resume_from: null
+# Fixes the train/val episode split and the shuffle order. Hold this constant
+# across every run of a comparison so all models see the same episodes.
+seed: 3072
+
+# Fixes model weight initialisation (and everything spt.Manager reseeds).
+# Hold it constant to compare red against green at a matched init; vary it to
+# measure how much two runs differ for reasons that have nothing to do with
+# the data. Without this key, init is drawn from OS entropy and is different
+# every run — which is what happened to the first red/green pair.
+init_seed: 1
+# 224, matching TwoRoom. The ball is 0.07 of the frame, so 15.7 px across here
+# against 23.5 px at 336 -- still several patches wide.
+img_size: 224
+# Per-channel statistics the images are normalised with before the encoder.
+#
+# 'imagenet' is the historical value and the default — every run before
+# 2026-10-22 used it, so changing the default would stop those reproducing.
+# It is a questionable inheritance for this scene though: its means differ per
+# channel (0.485, 0.456, 0.406), and that breaks colour symmetries the raw data
+# has. Every frame of the flat2d ball scene is byte-identical under a green/blue
+# channel swap, yet after ImageNet normalisation green sits ~0.22 below blue in
+# every pixel — which is the leading explanation for why the trained encoder
+# treats green and blue differently at all.
+#
+# 'symmetric' (0.5 / 0.25 on every channel) removes that, so the network's input
+# really is swap invariant. Used by the lewm_rb_red_sym_s* runs.
+img_stats: imagenet
+patch_size: 14
+encoder_scale: tiny
+embed_dim: 192
+encoder_resnet9: False
+train_value_function: False
+projector_loss_weight: 1e-3
+dump_object: True
+
+trainer:
+  max_epochs: 30
+  devices: auto
+  accelerator: gpu
+  precision: bf16
+  gradient_clip_val: 1.0
+
+loader:
+  # All four of these match the upstream TwoRoom config. batch_size is the one
+  # that matters for results; the rest are throughput.
+  batch_size: 128
+  num_workers: ${num_workers}
+  drop_last: True
+  persistent_workers: True
+  prefetch_factor: 3
+  pin_memory: True
+  shuffle: True
+
+optimizer:
+  type: AdamW
+  lr: 5e-5
+  weight_decay: 1e-3
+
+wm:
+  # 3, matching TwoRoom. The previous value of 6 was chosen to buy velocity
+  # signal at frameskip 1, where each frame carried very little movement. At
+  # frameskip 5 three context frames already span 68-269 px of the 376 px
+  # track, so the extra history is no longer needed to see motion.
+  history_size: 3
+  num_preds: 1
+
+model:
+  _target_: stable_worldmodel.wm.lewm.LeWM
+  encoder:
+    _target_: stable_pretraining.backbone.utils.vit_hf
+    size: ${encoder_scale}
+    patch_size: ${patch_size}
+    image_size: ${img_size}
+    pretrained: false
+    use_mask_token: false
+  predictor:
+    _target_: stable_worldmodel.wm.lewm.module.Predictor
+    num_frames: ${wm.history_size}
+    input_dim: ${embed_dim}
+    hidden_dim: ${embed_dim}
+    output_dim: ${embed_dim}
+    depth: 6
+    heads: 16
+    mlp_dim: 2048
+    dim_head: 64
+    dropout: 0.1
+    emb_dropout: 0.0
+  action_encoder:
+    _target_: stable_worldmodel.wm.lewm.module.Embedder
+    input_dim: ???
+    emb_dim: ${embed_dim}
+  projector:
+    _target_: stable_worldmodel.wm.lewm.module.MLP
+    input_dim: ${embed_dim}
+    output_dim: ${embed_dim}
+    hidden_dim: 2048
+    norm_fn:
+      _target_: torch.nn.BatchNorm1d
+      _partial_: true
+  pred_proj:
+    _target_: stable_worldmodel.wm.lewm.module.MLP
+    input_dim: ${embed_dim}
+    output_dim: ${embed_dim}
+    hidden_dim: 2048
+    norm_fn:
+      _target_: torch.nn.BatchNorm1d
+      _partial_: true
+
+loss:
+  sigreg:
+    weight: 0.09
+    kwargs:
+      knots: 17
+      num_proj: 1024

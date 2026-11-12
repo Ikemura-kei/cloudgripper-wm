@@ -34,10 +34,28 @@ def _on_train_start_compat(self):
 spt.Module.on_train_start = _on_train_start_compat
 
 
-def get_img_preprocessor(source: str, target: str, img_size: int = 224):
-    imagenet_stats = dt.dataset_stats.ImageNet
+# Named channel statistics for the image preprocessor.
+#
+# 'imagenet' is the default and what every run before 2026-10-22 used, so it
+# must stay the default or those runs stop reproducing. 'symmetric' exists for
+# one specific experiment: the ImageNet means differ per channel (0.485, 0.456,
+# 0.406), which silently breaks colour symmetries the raw data has. In the flat2d
+# ball scene every stored frame is byte-identical under a green/blue channel
+# swap, yet after ImageNet normalisation green sits ~0.22 below blue in every
+# pixel. 'symmetric' removes that, so the network's input really is swap
+# invariant and any remaining asymmetry has to come from the weights.
+IMG_STATS = {
+    'imagenet': dt.dataset_stats.ImageNet,
+    'symmetric': {'mean': [0.5, 0.5, 0.5], 'std': [0.25, 0.25, 0.25]},
+}
+
+
+def get_img_preprocessor(source: str, target: str, img_size: int = 224,
+                         stats: str = 'imagenet'):
+    if stats not in IMG_STATS:
+        raise ValueError(f'img_stats={stats!r}; expected one of {sorted(IMG_STATS)}')
     to_image = dt.transforms.ToImage(
-        **imagenet_stats, source=source, target=target
+        **IMG_STATS[stats], source=source, target=target
     )
     resize = dt.transforms.Resize(img_size, source=source, target=target)
     return dt.transforms.Compose(to_image, resize)
@@ -165,7 +183,21 @@ def check_loader_memory(cfg, dataset, fraction: float = 0.6):
         )
 
 
-def split_by_episode(dataset, train_frac: float, generator):
+def episode_strata(dataset_path: str, column: str) -> dict:
+    """episode id -> a hashable label read from `column`, for a stratified split.
+
+    Reads the lance file directly because the column is deliberately not in
+    keys_to_load — ground-truth factors are kept out of what the model sees.
+    """
+    import lance
+    import numpy as np
+    t = lance.dataset(dataset_path).to_table(columns=['episode_idx', column]).to_pandas()
+    first = t.groupby('episode_idx')[column].first()
+    return {int(e): tuple(np.asarray(v).reshape(-1).tolist())
+            for e, v in first.items()}
+
+
+def split_by_episode(dataset, train_frac: float, generator, strata: dict | None = None):
     """Split a dataset's clip windows into train/val by *episode*.
 
     Splitting the dataset directly (e.g. with random_split) splits its clip
@@ -189,6 +221,27 @@ def split_by_episode(dataset, train_frac: float, generator):
     """
     clip_eps = [ep for ep, _ in dataset.clip_indices]
     episodes = sorted(set(clip_eps))
+
+    if strata is not None:
+        # Split each group at train_frac separately, so every group is
+        # represented in train and val in the same proportion. A plain random
+        # split only balances in expectation: on a 2000-episode, 3-colour set
+        # it left the validation split 64/70/66 instead of 67/67/66, and the
+        # whole-dataset counts 10% apart.
+        groups = {}
+        for e in episodes:
+            groups.setdefault(strata[e], []).append(e)
+        train_eps = []
+        for key in sorted(groups):
+            g = groups[key]
+            idx = torch.randperm(len(g), generator=generator).tolist()
+            n = max(1, min(int(round(train_frac * len(g))), len(g) - 1))
+            train_eps.extend(g[i] for i in idx[:n])
+        train_eps = set(train_eps)
+        train_idx = [i for i, ep in enumerate(clip_eps) if ep in train_eps]
+        val_idx = [i for i, ep in enumerate(clip_eps) if ep not in train_eps]
+        return (torch.utils.data.Subset(dataset, train_idx),
+                torch.utils.data.Subset(dataset, val_idx))
 
     perm = torch.randperm(len(episodes), generator=generator).tolist()
     n_train = int(round(train_frac * len(episodes)))
@@ -263,7 +316,9 @@ def train(cfg):
     )
     transforms = [
         get_img_preprocessor(
-            source='pixels', target='pixels', img_size=cfg.img_size
+            source='pixels', target='pixels', img_size=cfg.img_size,
+            # absent from older configs, so it falls back to the historical value
+            stats=cfg.get('img_stats', 'imagenet'),
         )
     ]
 
@@ -285,7 +340,12 @@ def train(cfg):
     check_loader_memory(cfg, dataset)
 
     rnd_gen = torch.Generator().manual_seed(cfg.seed)
-    train_set, val_set = split_by_episode(dataset, cfg.train_split, rnd_gen)
+    strat_col = cfg.get('stratify_by', None)
+    strata = (episode_strata(dataset_name, strat_col) if strat_col else None)
+    if strata is not None:
+        print(f'stratifying the train/val split by {strat_col!r} '
+              f'({len(set(strata.values()))} groups)')
+    train_set, val_set = split_by_episode(dataset, cfg.train_split, rnd_gen, strata)
 
     # 'spawn', not 'fork': the dataset (e.g. LanceDataset) may already have
     # started lancedb's internal background threads by this point, and
@@ -308,6 +368,25 @@ def train(cfg):
     ##############################
     ##       model / optim      ##
     ##############################
+
+    # Seed the *global* torch RNG before the model is built, or weight init is
+    # drawn from OS entropy and differs every run — so two runs meant to differ
+    # only in their data actually start from different weights. cfg.seed does
+    # not cover this: it only ever reaches split_by_episode and the DataLoader
+    # through rnd_gen. spt.Manager does call pl.seed_everything, but at
+    # manager() far below, long after instantiate() has already drawn the
+    # weights, and with seed=None unless we pass one.
+    #
+    # Kept opt-in (absent -> None -> unchanged behaviour) so the configs that
+    # predate this key — lewm.yaml, lewm_ball.yaml, lewm_mujoco.yaml — keep
+    # producing what they produced before.
+    #
+    # Separate from cfg.seed on purpose: cfg.seed fixes the train/val episode
+    # split, which must stay identical across every run of a comparison, while
+    # init_seed is the thing you vary to measure run-to-run spread.
+    init_seed = cfg.get('init_seed', None)
+    if init_seed is not None:
+        pl.seed_everything(init_seed, workers=True)
 
     world_model = hydra.utils.instantiate(cfg.model)
 
@@ -394,6 +473,10 @@ def train(cfg):
         trainer=trainer,
         module=world_model,
         data=data_module,
+        # Without this Manager logs 'self.seed=None' and reseeds everything
+        # downstream (dropout masks, SIGReg's projections, worker seeds) from
+        # its own default rather than ours.
+        seed=init_seed,
         ckpt_path=ckpt_path if ckpt_path.exists() else None,
     )
 
