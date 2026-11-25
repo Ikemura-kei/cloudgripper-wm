@@ -76,6 +76,15 @@ def test_objects_against_the_frame(prim):
 def test_grasp_place_slot_reset_rope(prim):
     prim.scene.update(cube_blue=_obj(0.3, 0.3, 10, 10), slot=_obj(0.6, 0.6, 15, 16, 25.5))
     assert prim.pick_place("cube_blue", (0.5, 0.3)) and prim.env.held == []
+    # no room to open at the glass (the rope lies against the frame where a tip would open): the cube is let go
+    # from the first height at which opening is allowed
+    y0 = cf.GLASS[1]
+    rope = _obj(0.3, y0 + 6 * cf.MM, 60, 8, 8)
+    prim.scene.update(rope=rope)
+    assert prim.grasp("cube_blue") and prim.goto("turn", rot=0.5) and prim.place((0.3, y0 + 24 * cf.MM)) and prim.env.held == []
+    labels = [l for l, _ in prim.log]
+    assert ("place: let go", True) in prim.log and "place: no room to open, up a step" in labels
+    del prim.scene["rope"]
     # something beside the cube where one tip would come down: the tips take the cube's other side direction ...
     prim.scene.update(pan=_obj(0.3 + 14 * cf.MM, 0.3, 8, 7))
     assert prim.grasp("cube_blue") and abs(prim.env.unwrapped._target_pos[3] - 0.5) < 1e-6

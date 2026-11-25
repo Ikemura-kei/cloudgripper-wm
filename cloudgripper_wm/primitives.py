@@ -17,7 +17,7 @@ Positions are read once, when the primitive starts, from `env.states`.
 
 Written for cell 20 and its five objects. ponytail, all of it untested on the robot as of 2026-11-25:
 - heights, approach distance and waiting times below are first guesses to tune in supervised runs;
-- a primitive given up while holding an object keeps holding it; the next grasp opens at the top height and drops it;
+- a primitive given up while holding an object drops it from the top height;
 - taking a cube or the rope out of the slot, and the rope into the slot, are not written yet.
 """
 from __future__ import annotations
@@ -84,7 +84,21 @@ class Primitives:
     def _run(self, name: str, moves: list[tuple[str, dict]]) -> bool:
         for label, kw in moves:
             if not self.goto(f"{name}: {label}", **kw):
-                self.goto(f"{name}: given up, raising", z=1.0)
+                self._give_up(name)
+                return False
+        return True
+
+    def _give_up(self, name: str) -> None:
+        """Arm to the top height; whatever is held is dropped from there, so the next primitive starts empty-handed."""
+        self.goto(f"{name}: given up, raising", z=1.0)
+        if self.env.held:
+            self.goto(f"{name}: given up, dropping {', '.join(self.env.held)}", grip=self.open)
+
+    def _let_go(self, name: str) -> bool:
+        """Open the gripper here; if the filter blocks that (a tip would push a neighbour against the frame), go up
+        a step at a time and open as soon as it is allowed: the object drops from there (Kei, 2026-11-25)."""
+        while not self.goto(f"{name}: let go", grip=self.open):
+            if self.u._target_pos[2] >= 1.0 or not self.goto(f"{name}: no room to open, up a step", z=min(1.0, float(self.u._target_pos[2]) + 0.25)):
                 return False
         return True
 
@@ -186,13 +200,20 @@ class Primitives:
         if ok and name not in self.env.held:  # closed on nothing
             self.goto(f"grasp {name}: nothing between the tips, raising", z=1.0)
             return False
-        return ok and self.goto(f"grasp {name}: lift", z=1.0)
+        if ok and not self.goto(f"grasp {name}: lift", z=1.0):
+            self._give_up(f"grasp {name}")
+            return False
+        return ok
 
     def place(self, xy, tip_mm: float | None = None) -> bool:
         """Carry what is held to tips position `xy`, lower (to the glass, or to tip_mm), let go, raise."""
         rot = float(self.u._target_pos[3])
-        return self._run("place", [("carry", self._cmd(xy, rot)), ("down", dict(z=0.0 if tip_mm is None else z_for_tip(tip_mm))),
-                                   ("let go", dict(grip=self.open)), ("up", dict(z=1.0))])
+        if not self._run("place", [("carry", self._cmd(xy, rot)), ("down", dict(z=0.0 if tip_mm is None else z_for_tip(tip_mm)))]):
+            return False
+        if not self._let_go("place"):
+            self._give_up("place")
+            return False
+        return self.goto("place: up", z=1.0)
 
     def pick_place(self, name: str, xy) -> bool:
         return self.grasp(name) and self.place(xy)
@@ -207,8 +228,8 @@ class Primitives:
             return False
         rot = ((_rect_angle(slot.footprint_xy)[0] + np.pi / 2) % np.pi) / np.pi
         return self._run(f"{cube} into slot", [("turn", dict(rot=rot)), ("over the slot", self._cmd(slot.xy, rot)),
-                                               ("down", dict(z=z_for_tip(slot.height_mm + SLOT_DROP_MM))),
-                                               ("let go", dict(grip=self.open)), ("up", dict(z=1.0))])
+                                               ("down", dict(z=z_for_tip(slot.height_mm + SLOT_DROP_MM)))]) \
+            and self._let_go(f"{cube} into slot") and self.goto(f"{cube} into slot: up", z=1.0)
 
     def _rope_ends(self, inset_mm: float = 12.0):
         """[(grasp point, rope direction there (rad))] for the rope's two ends, from its outline in robot x, y.
@@ -235,8 +256,8 @@ class Primitives:
         if ok and "rope" not in self.env.held:
             self.goto("rope drag: nothing between the tips, raising", z=1.0)
             return False
-        return ok and self._run("rope drag", [("drag", self._cmd(p + np.asarray(delta_xy, float), rot)),
-                                              ("let go", dict(grip=self.open)), ("up", dict(z=1.0))])
+        return ok and self._run("rope drag", [("drag", self._cmd(p + np.asarray(delta_xy, float), rot))]) \
+            and self._let_go("rope drag") and self.goto("rope drag: up", z=1.0)
 
 
 def wait_scale(u) -> float:
