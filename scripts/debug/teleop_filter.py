@@ -25,7 +25,7 @@ the tip spacing from it. Cell 23's gripper is never commanded: --finger-sep-mm t
 7 closed). Only the axis that changes is sent
 (move_xy, move_z or rotate), one request at a time. x, y stay within 0.05 to 0.95.
 
-DIR gets moves.jsonl (every proposal: poses, verdict, sent or taken back), the view at each decision, and a video of
+DIR gets moves.jsonl (every proposal: poses with the gripper, the objects' footprints, verdict, sent or taken back), the view at each decision, and a video of
 the whole session as shown in the window (teleop_<time>.mp4, 4 frames per second).
 --no-window N runs N camera + tracking loops without a window or any move, and exits: a connection check."""
 import argparse
@@ -201,7 +201,8 @@ with open(out / "moves.jsonl", "a") as log:
             go = key == "y" and verdict.allowed or key == "Y"
             row = dict(t=time.time(), pose0=pose, pose1=pending, tip_mm=collision_filter.tip_mm(pending[2]), allowed=verdict.allowed,
                        reason=verdict.reason, pushed=verdict.pushed, decision="sent" if go else "taken back", forced=key == "Y" and not verdict.allowed,
-                       status={k_: s.status + (f" on {s.on}" if s.on else "") for k_, s in states.items()})
+                       status={k_: s.status + (f" on {s.on}" if s.on else "") for k_, s in states.items()},
+                       footprints={k_: np.round(s.footprint_xy, 4).tolist() for k_, s in states.items() if s.footprint_xy is not None})
             cv2.imwrite(str(out / f"move_{int(row['t'] * 10)}.jpg"), frame)
             if go and not send(pose, pending):
                 row["decision"] = "request failed"

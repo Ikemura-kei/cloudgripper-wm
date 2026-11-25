@@ -6,7 +6,8 @@ Blocked (these jam and break the gripper):
   - pushing an object, or a chain of touching objects, that the frame stops from moving;
   - a finger meeting the frame itself;
   - lowering a finger onto an object or the frame;
-  - opening the gripper into the frame, or into an object that the frame stops (cell 20; closing is a grasp);
+  - opening the gripper into the frame, or into an object that the frame stops (cell 20; closing is a grasp, and
+    an object clamped between the tips may be lowered and let go);
   - any move while an object is unaccounted for.
 Allowed: pushing a free object (reported in `verdict.pushed`), and everything that touches nothing.
 
@@ -193,6 +194,13 @@ def _jammed(chain: list[str], masks: dict, d_cells, extra_mm: float = 0.0) -> st
     return None
 
 
+def _held(pose, masks: dict, tops: dict) -> list[str]:
+    """Objects clamped between the tips at `pose`: the gripper is commanded narrower than the object, so BOTH tips
+    as drawn overlap it (the real ones are stopped by it). They go where the gripper goes."""
+    tip, (a, b) = tip_mm(pose[2]), (_raster([f]) for f in finger_polys(pose))
+    return [n for n, m in masks.items() if tops[n] > tip - CLEAR_MM and (m & a).any() and (m & b).any()]
+
+
 def _hull(a, b) -> np.ndarray:
     return cv2.convexHull(np.float32(np.vstack([a, b]))).reshape(-1, 2)
 
@@ -209,6 +217,7 @@ def check(pose0, pose1, states) -> Verdict:
         v.reason = f"blocked: {', '.join(missing)} unaccounted for"
         return v
     masks, tops = _obstacles(states)
+    held = _held(pose0, masks, tops)  # a grasped object is no obstacle to lowering or to letting go
 
     # the fingers along the move: x, y at the old rotation, then the turn at the new x, y; the gripper stays as it was
     end = pose1.copy(); end[4] = pose0[4]
@@ -224,7 +233,7 @@ def check(pose0, pose1, states) -> Verdict:
     tip0, tip1 = tip_mm(pose0[2]), tip_mm(pose1[2])
     under = _grow(_raster(finger_polys(end)), LOWER_MM)
     if tip1 < tip0:
-        hit = [n for n, m in masks.items() if tops[n] > tip1 - CLEAR_MM and (m & under).any()]
+        hit = [n for n, m in masks.items() if n not in held and tops[n] > tip1 - CLEAR_MM and (m & under).any()]
         if FRAME_MM > tip1 - CLEAR_MM and (_FRAME & under).any():
             hit.append("the frame")
         if hit:
@@ -254,7 +263,7 @@ def check(pose0, pose1, states) -> Verdict:
             if half > 0 and tip1 - CLEAR_MM < FRAME_MM and (_FRAME & path_g).any():
                 v.reason = "blocked: finger opening against the frame"
                 return v
-            met = [n for n, m in masks.items() if tops[n] > tip1 - CLEAR_MM and (m & path_g).any()]
+            met = [n for n, m in masks.items() if n not in held and tops[n] > tip1 - CLEAR_MM and (m & path_g).any()]
             if half > 0:
                 met = _chain(met, masks)
                 n = _jammed(met, masks, side * half * axis * _PX)

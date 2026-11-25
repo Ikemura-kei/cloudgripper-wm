@@ -101,6 +101,18 @@ def test_cell20_gripper_and_stray_cube():
         fx = x1 - 9 * MM
         assert "opening against the frame" in cf.check(at(fx, 0.5, 0.1), at(fx, 0.5, 0.825), {}).reason
         assert cf.check(at(fx, 0.5, 0.1, z=1.0), at(fx, 0.5, 0.825, z=1.0), {}).allowed  # above the frame: free
+        # a normal grasp, start to end: down around the cube, close, up, down again holding it, sideways, let go
+        c, g = cube(0.5, 0.5), (0.825, 0.1)
+        steps = [(at(0.5, 0.5, g[0], 1.0), at(0.5, 0.5, g[0], 0.0)), (at(0.5, 0.5, g[0]), at(0.5, 0.5, g[1])),
+                 (at(0.5, 0.5, g[1]), at(0.5, 0.5, g[1], 0.3)), (at(0.5, 0.5, g[1], 0.3), at(0.5, 0.5, g[1])),
+                 (at(0.5, 0.5, g[1]), at(0.525, 0.5, g[1])), (at(0.5, 0.5, g[1]), at(0.5, 0.5, g[0]))]
+        assert [cf.check(p0, p1, c).allowed for p0, p1 in steps] == [True] * 6, [cf.check(p0, p1, c).reason for p0, p1 in steps]
+        # ... and letting go of it is allowed right beside the frame, where opening onto a free cube is not
+        fx = x1 - 22 * MM
+        assert cf.check(at(fx, 0.5, 0.1), at(fx, 0.5, 0.825), cube(fx, 0.5)).allowed
+        # closed tips over a cube that is NOT between them (under one tip only): no lowering
+        off = 0.5 + (cf.sep_mm(0.1) / 2 + 7) * MM
+        assert not cf.check(at(0.5, 0.5, 0.1, 1.0), at(0.5, 0.5, 0.1), cube(off, 0.5)).allowed
         # a cube off the glass (seen only from above) is an obstacle where the top view puts it
         stray = dict(cube_white=SimpleNamespace(status="off_glass", on=None, height_mm=10, footprint_xy=None, inferred_xy=(0.5, 0.5)))
         assert not cf.check(at(0.5, 0.5, 0.1, z=1.0), at(0.5, 0.5, 0.1, z=0.3), stray).allowed
