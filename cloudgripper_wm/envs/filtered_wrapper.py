@@ -20,12 +20,17 @@ import gymnasium as gym
 import numpy as np
 
 from cloudgripper_wm import collision_filter
-from cloudgripper_wm.envs.constants import GRIPPER_RANGE, X_RANGE, Y_RANGE
+from cloudgripper_wm.envs.constants import GRIPPER_RANGE
 from cloudgripper_wm.envs.safe_cloudgripper_wrapper import _calibration_paths
 from cloudgripper_wm.utils.cloudgripper_image_processor import CloudGripperImageProcessor
 
 # Gripper command range per cell (closed, open). Cell 20: Kei, 2026-11-25.
 CELL_GRIPPER_RANGE = {"robot20": (0.1, 0.825)}
+# Commanded x, y range per cell. Cell 20 (Kei, 2026-11-25): beyond the frame's inner edges (glass 0.043 to 0.842 /
+# 0.052 to 0.845), so that objects at the frame can be pushed back; the filter guards the frame. 0.05 to 0.95 is
+# the arm's range as used so far. On the low sides that is no further than the glass edge: nothing can get behind
+# an object lying against the frame there. Beyond x 0.88 nothing is visible from below.
+CELL_XY_RANGE = {"robot20": ((0.05, 0.95), (0.05, 0.95))}
 
 
 class FilteredCloudGripperWrapper(gym.Wrapper):
@@ -36,6 +41,7 @@ class FilteredCloudGripperWrapper(gym.Wrapper):
         self._name: str = u._robot_name
         collision_filter.use_cell(self._name)
         u._gripper_range = CELL_GRIPPER_RANGE.get(self._name, GRIPPER_RANGE)
+        u._x_range, u._y_range = CELL_XY_RANGE.get(self._name, (u._x_range, u._y_range))
         self._proc = CloudGripperImageProcessor(*_calibration_paths(self._name))
         if tracker is None:
             from cloudgripper_wm.perception import SceneTracker  # here: it loads SAM 2 onto the GPU
@@ -70,7 +76,7 @@ class FilteredCloudGripperWrapper(gym.Wrapper):
         current = u._target_pos.copy()
         candidate = np.clip(current + action, 0.0, 1.0)  # as CloudGripperEnv.step clips it
         if u._restrict_xy:
-            candidate[0], candidate[1] = np.clip(candidate[0], *X_RANGE), np.clip(candidate[1], *Y_RANGE)
+            candidate[0], candidate[1] = np.clip(candidate[0], *u._x_range), np.clip(candidate[1], *u._y_range)
         candidate[4] = np.clip(candidate[4], *u._gripper_range)
         verdict = collision_filter.check(current, candidate, self.states, self.held)
         self.n_steps += 1

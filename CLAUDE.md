@@ -718,3 +718,20 @@ offset with a fixed and a turning part, tip heights). Every constant is in the f
   supervised live check (random actions, video). Not yet run on the robot.
 - `scripts/debug/teleop_video_speedup.py VIDEO.mp4` shortens a teleop session video: X8 everywhere, X1 around
   blocked moves.
+
+## Play primitives (`cloudgripper_wm/primitives.py`)
+
+`Primitives(env)` on a `FilteredCloudGripperWrapper`: `push`, `reset_objects`, `grasp` / `place` / `pick_place`,
+`cube_into_slot`, `rope_drag`. Each is a list of single absolute moves sent through `env.step`, so the collision
+filter judges every move; a blocked move gives the primitive up (arm to the top height, returns False) and the caller
+picks the next one. Written for cell 20; heights, approach distance and waiting times are first guesses.
+
+- `reset_objects` brings objects far from the glass centre back: cubes are picked up and put on a free spot (near the
+  frame the tips go along it; in a corner the cube is pushed instead), slot and pan are pushed, the rope's farther end
+  is dragged. A slot or pan against the low-x or low-y frame, and a pan against any frame, stay where they are: the
+  arm's range (0.05 to 0.95) ends at the glass edge on the low sides, so nothing gets behind them.
+- Not written yet: taking a cube or the rope out of the slot, the rope into the slot.
+- `tests/test_primitives.py` runs the sequences on the mock robot. `scripts/debug/primitives_check.py --out DIR
+  reset push:pan:1,0:30 ...` is the supervised live run (window + video; `--mock` for a dry run).
+  `cloudgripper_wm/envs/filter_view.py` is the window/video helper both debug scripts share.
+- Not yet run on the robot (2026-11-25).

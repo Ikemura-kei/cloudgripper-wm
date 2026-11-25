@@ -20,12 +20,10 @@ If a step is sent that brings the tips to within 0.5 mm of the object's top, the
 raises the arm and stops. The final pose is saved for teleop_filter.py, which can then start without --start."""
 import argparse
 import json
-import subprocess
 import sys
 import warnings
 from pathlib import Path
 
-import cv2
 import numpy as np
 
 warnings.filterwarnings("ignore")
@@ -33,10 +31,9 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "third_party/cloudgripper-api"), str(ROOT)]
 from cloudgripper_wm import collision_filter  # noqa: E402
 from cloudgripper_wm.envs.cloudgripper_env import CloudGripperEnv  # noqa: E402
-from cloudgripper_wm.envs.constants import X_RANGE, Y_RANGE  # noqa: E402
 from cloudgripper_wm.envs.filtered_wrapper import FilteredCloudGripperWrapper  # noqa: E402
 from cloudgripper_wm.envs.robot_pool import RobotPool  # noqa: E402
-from cloudgripper_wm.perception import draw_states  # noqa: E402
+from cloudgripper_wm.envs.filter_view import SessionView, mock_scene  # noqa: E402
 
 p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
 p.add_argument("--robot", default="robot20")
@@ -50,37 +47,21 @@ out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
 rng = np.random.default_rng(a.seed)
 RobotPool.configure([a.robot])
 tracker = None
-if a.mock:  # a cube, the slot and the pan at made-up places; one cube outside the env's x, y range
+if a.mock:
     from types import SimpleNamespace
-
-    def obj(x, y, w, h):
-        return SimpleNamespace(status="on_glass", on=None, xy=(x, y), height_mm=h, mask_base=None, mask_top=None, inferred_px=None,
-                               footprint_xy=np.array([x, y]) + w / 2 * collision_filter.MM * np.array([[-1, -1], [1, -1], [1, 1], [-1, 1]]))
-    scene = dict(cube_blue=obj(0.7, 0.34, 10, 10), cube_white=obj(0.1, 0.3, 10, 10), slot=obj(0.3, 0.55, 20, 16), pan=obj(0.5, 0.7, 25, 7))
+    scene = mock_scene()
     tracker = SimpleNamespace(start=lambda b, t: scene, step=lambda b, t: scene, refresh=lambda b, t: scene)
 env = FilteredCloudGripperWrapper(CloudGripperEnv(max_delta=0.05, dwell_time=0 if a.mock else 0.5, reset_dwell_time=0 if a.mock else 2.0, use_mock=a.mock),
                                   log_path=str(out / "blocked.jsonl"), tracker=tracker)
-video = None
+view = SessionView(env, out, window=not a.mock)
 
 
 def step(action, label):
     """One env step, shown and recorded; True if the filter blocked it."""
-    global video
     before = env.n_blocked
     env.step(np.asarray(action, np.float32))
-    u, blocked = env.unwrapped, env.n_blocked > before
-    base = env._proc.undistort_fish_eye(u._last_base_img)
-    for poly in collision_filter.finger_polys(u._target_pos) if not a.mock else ():
-        cv2.polylines(base, [np.int32([env._tracker.conv.x_y_to_px_py(x, y) for x, y in poly])], True, (255, 255, 255), 2)
-    pose = "x {:.3f} y {:.3f} z {:.2f} rot {:.0f} grip {:.2f}".format(*u._target_pos[:3], u._target_pos[3] * 180, u._target_pos[4])
-    frame = draw_states(base, u._last_top_img, env.states, f"{label}: {'BLOCKED' if blocked else 'sent'}   |   at {pose}")
-    if video is None:
-        video = cv2.VideoWriter(str(out / "check_raw.mp4"), cv2.VideoWriter_fourcc(*"mp4v"), 2, frame.shape[1::-1])
-    video.write(frame)
-    if not a.mock:
-        cv2.imshow(f"filtered env check, {a.robot}", cv2.resize(frame, None, fx=0.75, fy=0.75))
-        cv2.waitKey(1)
-    return blocked
+    view.show(label, env.n_blocked > before)
+    return env.n_blocked > before
 
 
 def provoke():
@@ -88,13 +69,13 @@ def provoke():
     u = env.unwrapped
     off = np.add(collision_filter.TOOL_OFFSET, collision_filter.TOOL_OFFSET_TURNING)  # tips' midpoint - commanded x, y at rotation 0
     targets = [(n, np.array(s.xy), s.height_mm) for n, s in env.states.items() if n != "rope" and s.status == "on_glass"]
-    targets.append(("the frame", np.array([1.0, 0.5]), collision_filter.FRAME_MM))  # x is clipped to the env's range: tips over the frame
+    targets.append(("the frame", np.array([1.0, 0.5]), collision_filter.FRAME_MM))  # x is set below
     results = []
     for name, xy, top in targets:
         goal = np.array([*(xy - off), 1.0, 0.0, u._gripper_range[0]])
         if name == "the frame":
-            goal[0] = X_RANGE[1]
-        elif not (X_RANGE[0] <= goal[0] <= X_RANGE[1] and Y_RANGE[0] <= goal[1] <= Y_RANGE[1]):
+            goal[0] = min(u._x_range[1], collision_filter.GLASS[2])  # tips over the frame's inner edge
+        elif not (u._x_range[0] <= goal[0] <= u._x_range[1] and u._y_range[0] <= goal[1] <= u._y_range[1]):
             results.append((name, "skipped: outside the env's x, y range", float("nan")))
             continue
         if step(goal - u._target_pos, f"to above {name}"):  # at top height, closed
@@ -128,12 +109,6 @@ try:
             action[4] = rng.choice([-0.75, 0.0, 0.0, 0.75])  # now and then close or open fully
         step(action, f"step {i}")
 finally:
-    if video is not None:  # re-encode to H.264 so that VS Code, browsers and chat apps play it
-        video.release()
-        if subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", str(out / "check_raw.mp4"), "-c:v", "libx264", "-pix_fmt", "yuv420p", str(out / "check.mp4")]).returncode == 0:
-            (out / "check_raw.mp4").unlink()
-    last = Path.home() / f".cache/cloudgripper_wm/{a.robot}_last_pose.json"
-    last.parent.mkdir(parents=True, exist_ok=True)
-    (Path("/dev/null") if a.mock else last).write_text(json.dumps([round(float(v), 4) for v in env.unwrapped._target_pos]))
+    view.close(save_pose=not a.mock)
     print(f"{env.n_blocked} of {env.n_steps} steps blocked; arm left at {env.unwrapped._target_pos}")
     env.close()

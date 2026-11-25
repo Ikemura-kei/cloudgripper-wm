@@ -84,6 +84,7 @@ class CloudGripperEnv(gym.Env):
         self._restrict_xy: bool = True
         # Gripper command range; FilteredCloudGripperWrapper narrows it per cell (robot20: 0.1 closed, 0.825 open).
         self._gripper_range: tuple[float, float] = GRIPPER_RANGE
+        self._x_range, self._y_range = X_RANGE, Y_RANGE  # widened per cell by FilteredCloudGripperWrapper
         self._last_sent_pos: np.ndarray = np.full(5, np.inf, dtype=np.float32)
         self._last_top_img: np.ndarray | None = None
         self._last_base_img: np.ndarray | None = None
@@ -139,8 +140,8 @@ class CloudGripperEnv(gym.Env):
         action = np.asarray(action, dtype=np.float32)
         self._target_pos = np.clip(self._target_pos + action, 0.0, 1.0)
         if self._restrict_xy:
-            self._target_pos[0] = np.clip(self._target_pos[0], *X_RANGE)
-            self._target_pos[1] = np.clip(self._target_pos[1], *Y_RANGE)
+            self._target_pos[0] = np.clip(self._target_pos[0], *self._x_range)
+            self._target_pos[1] = np.clip(self._target_pos[1], *self._y_range)
         self._target_pos[4] = np.clip(self._target_pos[4], *self._gripper_range)
         self._send_absolute()
 
