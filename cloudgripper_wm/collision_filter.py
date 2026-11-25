@@ -6,6 +6,7 @@ Blocked (these jam and break the gripper):
   - pushing an object, or a chain of touching objects, that the frame stops from moving;
   - a finger meeting the frame itself;
   - lowering a finger onto an object or the frame;
+  - opening the gripper into the frame, or into an object that the frame stops (cell 20; closing is a grasp);
   - any move while an object is unaccounted for.
 Allowed: pushing a free object (reported in `verdict.pushed`), and everything that touches nothing.
 
@@ -65,6 +66,7 @@ CONTACT_MM = 1.5
 LOWER_MM = 1.5
 JAM_MM = 2.0      # an object this close to the frame, after the push, counts as stopped by it (5 blocked too early; same tuning)
 ROPE_LOCAL_MM = 25.0  # only this much rope around the fingers is treated as pushed: the rest just bends
+STACK_GROW_MM = 10.0  # an object with a cube stacked on it grows by this much all round (one cube: see _obstacles)
 SAMPLES = 8       # poses rasterised along one move
 
 _PX = 280  # grid cells per robot unit (0.5 mm)
@@ -150,10 +152,55 @@ def _frame() -> np.ndarray:
 _FRAME = _frame()
 
 
+def _obstacles(states) -> tuple[dict, dict]:
+    """Rasterised footprints and top heights (mm) of everything a finger can meet, by object name."""
+    tops = {n: s.height_mm for n, s in states.items() if s.status == "on_glass" and s.footprint_xy is not None}
+    masks = {n: _raster([states[n].footprint_xy]) for n in tops}
+    for n, s in states.items():
+        if s.status == "stacked" and s.on in tops:
+            # "stacked on X" only means off the glass and touching X in the top view: the cube may also lean
+            # beside X (on the rope, say). So X gets the cube's height and grows by a cube all round.
+            tops[s.on] += s.height_mm
+            masks[s.on] = _grow(masks[s.on], STACK_GROW_MM)
+        elif s.status in ("stacked", "off_glass") and getattr(s, "inferred_xy", None) is not None:
+            # off the glass and on nothing we see from below (on the frame, most likely): an obstacle of its own
+            # where the top view puts it. ponytail: that position is rough, hence the generous square, and the
+            # height assumes it rests on something as tall as the frame
+            r = (STACK_GROW_MM + 5) * MM * np.array([[-1, -1], [1, -1], [1, 1], [-1, 1]])
+            masks[n], tops[n] = _raster([np.array(s.inferred_xy) + r]), FRAME_MM + s.height_mm
+    return masks, tops
+
+
+def _chain(first: list[str], masks: dict) -> list[str]:
+    """`first` plus every object that touches one of them, and so on: they move together."""
+    chain = list(first)
+    for n in chain:
+        chain += [o for o, m in masks.items() if o not in chain and (m & _grow(masks[n], CONTACT_MM)).any()]
+    return chain
+
+
+def _jammed(chain: list[str], masks: dict, d_cells, extra_mm: float = 0.0) -> str | None:
+    """The first object of `chain` that the frame would stop if all were shifted by d_cells (grid cells, x, y).
+
+    It ends up deeper in the frame's margin than it was: sliding along the frame is not a jam.
+    """
+    shift = np.float32([[1, 0, d_cells[1]], [0, 1, d_cells[0]]])
+    for n in chain:
+        moved = cv2.warpAffine(masks[n], shift, (_N, _N), flags=cv2.INTER_NEAREST)
+        before, after = (int((_grow(m, JAM_MM + a) & _FRAME).sum()) for m, a in ((masks[n], 0.0), (moved, extra_mm)))
+        if after > before + 10:  # 10 cells of raster noise
+            return n
+    return None
+
+
+def _hull(a, b) -> np.ndarray:
+    return cv2.convexHull(np.float32(np.vstack([a, b]))).reshape(-1, 2)
+
+
 def check(pose0, pose1, states) -> Verdict:
     """May the arm go from pose0 to pose1? `states` is SceneTracker's {name: ObjectState}.
 
-    The move is taken as the env sends it: x, y first, then z, then rotation.
+    The move is taken as the env sends it: x, y first, then z, then rotation, then the gripper.
     """
     pose0, pose1 = np.asarray(pose0, float), np.asarray(pose1, float)
     v = Verdict(False, "", fingers=finger_polys(pose1))
@@ -161,29 +208,21 @@ def check(pose0, pose1, states) -> Verdict:
     if missing:
         v.reason = f"blocked: {', '.join(missing)} unaccounted for"
         return v
+    masks, tops = _obstacles(states)
 
-    # obstacles: every object on the glass with what is stacked on it, and the frame
-    tops = {n: s.height_mm for n, s in states.items() if s.status == "on_glass" and s.footprint_xy is not None}
-    for s in states.values():
-        if s.status == "stacked" and s.on in tops:
-            tops[s.on] += s.height_mm
-    # ponytail: a cube off the glass that rests on the rope beside its "on" object is not an obstacle of its own;
-    # give it one from its top-view position before lowering is allowed
-    masks = {n: _raster([states[n].footprint_xy]) for n in tops}
-
-    # the fingers along the move: x, y at the old rotation, then the turn at the new x, y
-    mid = pose0.copy(); mid[:2] = pose1[:2]
+    # the fingers along the move: x, y at the old rotation, then the turn at the new x, y; the gripper stays as it was
+    end = pose1.copy(); end[4] = pose0[4]
+    mid = pose0.copy(); mid[:2] = end[:2]
     path = [pose0 + (mid - pose0) * t for t in np.linspace(0, 1, SAMPLES)]
-    path += [mid + (pose1 - mid) * t for t in np.linspace(0, 1, SAMPLES)[1:]] if pose1[3] != pose0[3] else []
-    swept = _raster([cv2.convexHull(np.float32(np.vstack([a, b]))).reshape(-1, 2)  # hull of consecutive samples
-                     for p, q in zip(path, path[1:] + path[-1:]) for a, b in zip(finger_polys(p), finger_polys(q))])
+    path += [mid + (end - mid) * t for t in np.linspace(0, 1, SAMPLES)[1:]] if end[3] != pose0[3] else []
+    swept = _raster([_hull(a, b) for p, q in zip(path, path[1:] + path[-1:]) for a, b in zip(finger_polys(p), finger_polys(q))])
     reach = _grow(swept, CONTACT_MM)
     if "rope" in masks:
         masks["rope"] &= _grow(swept, ROPE_LOCAL_MM)
 
     # lowering: nothing may be under a finger that ends below its top
     tip0, tip1 = tip_mm(pose0[2]), tip_mm(pose1[2])
-    under = _grow(_raster(v.fingers), LOWER_MM)
+    under = _grow(_raster(finger_polys(end)), LOWER_MM)
     if tip1 < tip0:
         hit = [n for n, m in masks.items() if tops[n] > tip1 - CLEAR_MM and (m & under).any()]
         if FRAME_MM > tip1 - CLEAR_MM and (_FRAME & under).any():
@@ -197,23 +236,32 @@ def check(pose0, pose1, states) -> Verdict:
     if tip - CLEAR_MM < FRAME_MM and (_FRAME & reach).any():
         v.reason = "blocked: finger against the frame"
         return v
-    chain = [n for n, m in masks.items() if tops[n] > tip - CLEAR_MM and (m & reach).any()]
-    for n in chain:  # objects touching a pushed object are pushed too
-        chain += [o for o, m in masks.items() if o not in chain and (m & _grow(masks[n], CONTACT_MM)).any()]
-    if not chain:
-        v.allowed, v.reason = True, "free"
-        return v
-    v.pushed = chain
+    chain = _chain([n for n, m in masks.items() if tops[n] > tip - CLEAR_MM and (m & reach).any()], masks)
     # would the frame stop any of them? Shift each by the travel (a turn pushes any way: grow by the arc instead)
-    # and see whether it ends up deeper in the frame's margin than it was: sliding along the frame is not a jam.
-    d = (pose1[:2] - pose0[:2]) * _PX
-    arc = abs(pose1[3] - pose0[3]) * np.pi * (sep_mm(pose1[4]) / 2 + FINGER_MM[0])
-    shift = np.float32([[1, 0, d[1]], [0, 1, d[0]]])
-    for n in chain:
-        moved = cv2.warpAffine(masks[n], shift, (_N, _N), flags=cv2.INTER_NEAREST)
-        before, after = (int((_grow(m, JAM_MM + a) & _FRAME).sum()) for m, a in ((masks[n], 0.0), (moved, arc)))
-        if after > before + 10:  # 10 cells of raster noise
-            v.reason = f"blocked: pushes {', '.join(chain)} with {n} against the frame"
-            return v
-    v.allowed, v.reason = True, f"pushes {', '.join(chain)}"
+    arc = abs(end[3] - pose0[3]) * np.pi * (sep_mm(pose0[4]) / 2 + FINGER_MM[0])
+    n = _jammed(chain, masks, (end[:2] - pose0[:2]) * _PX, arc)
+    if n:
+        v.reason = f"blocked: pushes {', '.join(chain)} with {n} against the frame"
+        return v
+
+    # the gripper, last and at the final pose. Closing on an object is a grasp and allowed. Opening pushes what the
+    # tips meet outwards along the gripper axis: blocked if that is the frame, or an object the frame would stop.
+    half = (sep_mm(pose1[4]) - sep_mm(pose0[4])) / 2 * MM
+    if half:
+        axis = np.array([np.cos(pose1[3] * np.pi), np.sin(pose1[3] * np.pi)])
+        for side, a, b in zip((-1, 1), finger_polys(end), v.fingers):
+            path_g = _grow(_raster([_hull(a, b)]), CONTACT_MM)
+            if half > 0 and tip1 - CLEAR_MM < FRAME_MM and (_FRAME & path_g).any():
+                v.reason = "blocked: finger opening against the frame"
+                return v
+            met = [n for n, m in masks.items() if tops[n] > tip1 - CLEAR_MM and (m & path_g).any()]
+            if half > 0:
+                met = _chain(met, masks)
+                n = _jammed(met, masks, side * half * axis * _PX)
+                if n:
+                    v.reason = f"blocked: opening pushes {', '.join(met)} with {n} against the frame"
+                    return v
+            chain += [n for n in met if n not in chain]
+    v.allowed, v.pushed = True, chain
+    v.reason = f"pushes {', '.join(chain)}" if chain else "free"
     return v

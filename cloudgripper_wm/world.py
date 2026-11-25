@@ -48,6 +48,7 @@ class CloudGripperWorld:
         dwell_time: float = 0.5,
         max_delta: float = 0.05,
         safety: dict | None = None,
+        collision_filter: dict | None = None,
         **kwargs: Any,
     ) -> None:
         if not use_mock:
@@ -63,6 +64,10 @@ class CloudGripperWorld:
                 *extra_wrappers,
                 partial(SafeCloudGripperWrapper, live_view=False, **safety),
             ]
+
+        if collision_filter is not None:  # SceneTracker + collision_filter.check on every step (kwargs: log_path)
+            from cloudgripper_wm.envs.filtered_wrapper import FilteredCloudGripperWrapper
+            extra_wrappers = [*extra_wrappers, partial(FilteredCloudGripperWrapper, **collision_filter)]
 
         self._world = swm.World(
             env_name,

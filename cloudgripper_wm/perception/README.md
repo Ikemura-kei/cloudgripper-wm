@@ -48,9 +48,14 @@ On cell 20 (`self.colour_prompts`) every object is prompted by its colour, in ea
    colour behind the object.
 4. **Fallback.** What colour did not find goes through the shape steps below (promptless pass, homography boxes).
 
-Known limits: the HSV numbers come from one layout and one lighting; from below the white cube has the gantry
+A cube's colour region and its mask in the base view must also be one solid square of a cube's size (`cube_like`):
+on a second layout (2026-11-25) the white cube lay against the gantry rail, its own colour region failed, and a grey
+rail mount of about the right area was taken for it. With the check the mount is rejected, the shape fallback finds
+the cube, and a cube mask that later runs onto a robot part counts as not seen from below.
+
+Known limits: the HSV numbers come from two layouts and one lighting; from below the white cube has the gantry
 rail's grey and the blue cube the frame's and the cable chain's blue, so a cube touching those in the picture is not
-found by colour; the rope keeps only its largest piece (no merging across an occlusion yet).
+found by colour (the shape fallback has to find it); the rope keeps only its largest piece (no merging across an occlusion yet).
 
 Cell 23 still runs the shape steps only.
 

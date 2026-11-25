@@ -683,7 +683,10 @@ lists every assumption and what is and is not tested. The objects' STL files are
 - `scripts/debug/perception_replay.py SWEEP_DIR [...]` (a uv inline-metadata script) replays recorded sweeps through
   it without a robot and writes a side-by-side video.
 - `tests/test_perception_inventory.py` checks the naming logic without a GPU.
-- Not yet connected to `SafeCloudGripperWrapper`, which still builds its heightmap from a green colour mask.
+- Runs inside the env through `FilteredCloudGripperWrapper` (see the collision filter below). `SafeCloudGripperWrapper`
+  is the older, separate check that builds a heightmap from a green colour mask.
+- In the base view a cube's mask must be one solid square of a cube's size (`cube_like`); otherwise the cube counts as
+  not seen from below. This rejects grey robot parts taken for the white cube.
 - The robot's reported `x_norm`, `y_norm` trail the real arm by seconds to minutes (measured 2026-11-23): use the
   commanded pose.
 
@@ -691,7 +694,8 @@ lists every assumption and what is and is not tested. The objects' STL files are
 
 `check(pose0, pose1, states)` decides from `SceneTracker`'s states whether one commanded move may jam the gripper:
 pushing a free object is allowed; pushing an object (or a chain of touching objects) against the frame, a finger
-against the frame, and lowering onto something are blocked. Pure geometry, no GPU. The module holds cell 23's numbers
+against the frame, lowering onto something, and opening the gripper into the frame or into an object the frame stops
+are blocked (closing is a grasp and allowed). Pure geometry, no GPU. The module holds cell 23's numbers
 by default; `use_cell("robot20")` switches to cell 20's (`CELL20`: glass, tip spacing from the gripper command, tool
 offset with a fixed and a turning part, tip heights). Every constant is in the file with how it was measured.
 
@@ -703,4 +707,14 @@ offset with a fixed and a turning part, tip heights). Every constant is in the f
 - `scripts/debug/calibrate_cam_to_robot.py` makes a cell's pixel-to-robot file (it moves the robot).
 - `scripts/debug/teleop_filter.py` (default robot20, records a video of the session) is the by-eye test: each key proposes one move, the live view shows the masks, the
   finger tips now and after the move, and the verdict; `y` sends it, any other key takes it back. It moves the robot.
-- Not yet connected to `SafeCloudGripperWrapper`.
+- A cube that is off the glass is an obstacle too: an object with a cube "stacked" on it grows by one cube all round
+  (the cube may lean beside it), and a cube on nothing we see from below gets a square where the top view puts it.
+- **In the env:** `cloudgripper_wm/envs/filtered_wrapper.py`, `FilteredCloudGripperWrapper(env)` or
+  `CloudGripperWorld(robot_names=["robot20"], collision_filter={})`. Reset raises the arm before the env travels
+  home, then finds the objects; every step is checked against the objects seen after the previous step and a
+  blocked action becomes a zero action (optionally logged to `log_path`). It also narrows the gripper range per cell
+  (robot20: 0.1 to 0.825). All robots of one process must be the same cell type (`use_cell` is module-wide).
+  `tests/test_filtered_wrapper.py` checks it on the mock robot; `scripts/debug/filtered_env_check.py` is the
+  supervised live check (random actions, video). Not yet run on the robot.
+- `scripts/debug/teleop_video_speedup.py VIDEO.mp4` shortens a teleop session video: X8 everywhere, X1 around
+  blocked moves.

@@ -82,6 +82,8 @@ class CloudGripperEnv(gym.Env):
         # SafeCloudGripperWrapper.push_objects_to_center() to reach the full
         # WORKSPACE_BOUNDS edges when retrieving objects.
         self._restrict_xy: bool = True
+        # Gripper command range; FilteredCloudGripperWrapper narrows it per cell (robot20: 0.1 closed, 0.825 open).
+        self._gripper_range: tuple[float, float] = GRIPPER_RANGE
         self._last_sent_pos: np.ndarray = np.full(5, np.inf, dtype=np.float32)
         self._last_top_img: np.ndarray | None = None
         self._last_base_img: np.ndarray | None = None
@@ -110,6 +112,7 @@ class CloudGripperEnv(gym.Env):
         self._target_pos = (
             self.task.home_pos().copy() if self.task is not None else DEFAULT_HOME_POS.copy()
         )
+        self._target_pos[4] = np.clip(self._target_pos[4], *self._gripper_range)
         self._last_sent_pos[:] = np.inf   # force all axes to be sent on reset
         print(f"[{self._robot_name}] reset → home={self._target_pos}, dwell={self.reset_dwell_time}s")
         self._send_absolute()
@@ -138,7 +141,7 @@ class CloudGripperEnv(gym.Env):
         if self._restrict_xy:
             self._target_pos[0] = np.clip(self._target_pos[0], *X_RANGE)
             self._target_pos[1] = np.clip(self._target_pos[1], *Y_RANGE)
-        self._target_pos[4] = np.clip(self._target_pos[4], *GRIPPER_RANGE)
+        self._target_pos[4] = np.clip(self._target_pos[4], *self._gripper_range)
         self._send_absolute()
 
         print("Sending action took {:.3f} seconds, now dwelling for {:.3f} seconds...".format(

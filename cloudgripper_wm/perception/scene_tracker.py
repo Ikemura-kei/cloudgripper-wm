@@ -91,6 +91,7 @@ class ObjectState:
     footprint_xy: np.ndarray | None = None  # (N, 2) polygon in robot x, y (on_glass only)
     height_mm: float = 0.0  # own height; a stack's height is the sum over `on`
     inferred_px: tuple[float, float] | None = None  # stacked / off_glass: centre in the base view, inferred from the top view
+    inferred_xy: tuple[float, float] | None = None  # the same in robot x, y (rough: an obstacle for the filter, not a measurement)
     inferred_angle_deg: float | None = None  # its in-plane angle in the base view, where known (a cube in the slot)
     mask_base: np.ndarray | None = None  # bool (480, 640), None if never prompted in this view
     mask_top: np.ndarray | None = None  # bool (720, 1280)
@@ -117,7 +118,18 @@ def colour_region(hsv: np.ndarray, name: str, view: str, roi: np.ndarray) -> np.
     ok = [i for i in range(1, k) if AREA_TOL[0] * a <= stats[i, cv2.CC_STAT_AREA] <= AREA_TOL[1] * a]
     if kind == "cube":  # compact: about as wide as high, and filling its bounding box
         ok = [i for i in ok if 0.5 <= stats[i, 2] / stats[i, 3] <= 2 and stats[i, 4] >= 0.5 * stats[i, 2] * stats[i, 3]]
+    if kind == "cube" and view == "base":
+        ok = [i for i in ok if cube_like(lab == i)]
     return lab == ok[0] if len(ok) == 1 else None
+
+
+def cube_like(mask: np.ndarray) -> bool:
+    """Base view: is this one solid square of a cube's size? A cube measures 29 to 36 px a side at solidity 0.93 or
+    more; the grey rail mount that was once taken for the white cube (2026-11-25) has solidity 0.54."""
+    if not mask.any():
+        return False
+    short, long, solidity, _ = shape_features(mask)
+    return solidity >= 0.8 and short >= 24 and long <= 44
 
 
 def spread_points(region: np.ndarray, k: int) -> np.ndarray | None:
@@ -351,6 +363,10 @@ class SceneTracker:
     def _look(self, base_bgr: np.ndarray, top_bgr: np.ndarray) -> dict[str, ObjectState]:
         missing = {n for n, s in self.states.items() if s.status != "on_glass"}
         rigid_missing = missing - {"rope"}
+        for name in rigid_missing & self.base.ids.keys():  # prompted before but lost or rejected: prompt it afresh
+            if not self.base.masks.get(name, np.zeros(1)).any():
+                with self._ctx():
+                    self.base.remove(name)
         # 1a. colour prompts: points inside the object's colour region, in each view on its own
         self.prompts = getattr(self, "prompts", {})  # (view, name) -> ("points" | "box" | "mask", value), for debugging
         if rigid_missing and self.colour_prompts:
@@ -480,7 +496,10 @@ class SceneTracker:
                 cap = ROPE_MAX_PX[view] if name == "rope" else AREA_TOL[1] * AREA_PX[name.split("_")[0]][view == "top"]
                 if name != "rope":  # a rigid object has no thin parts: cut tails (a red wire behind the slot joined its mask)
                     m = cv2.morphologyEx(m.astype(np.uint8), cv2.MORPH_OPEN, np.ones((7, 7), np.uint8)).astype(bool)
-                stream.masks[name] = one_piece(m, cap)
+                m = one_piece(m, cap)
+                if view == "base" and name.startswith("cube") and not cube_like(m):
+                    m = np.zeros_like(m)  # not a cube (a robot part, or the mask ran along the rail): not seen from below
+                stream.masks[name] = m
         top_seen = {n: m for n, m in self.top.masks.items() if m.sum() >= 150}
         for name in INVENTORY:
             mb, mt = self.base.masks.get(name), self.top.masks.get(name)
@@ -518,6 +537,7 @@ class SceneTracker:
                     s.inferred_px = tuple(inner[np.linalg.norm(inner - p, axis=1).argmin()].astype(float)) if len(inner) else tuple(p)
                 else:
                     s.inferred_px = tuple(b[0])
+                s.inferred_xy = tuple(float(v) for v in self._px_to_xy([s.inferred_px])[0])
             self.states[name] = s
         return self.states
 

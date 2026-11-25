@@ -76,3 +76,39 @@ def test_lowering():
     # lowering beside everything is free, and so is lowering a little while still clear of the cube below
     assert cf.check(_pose(0.3, 0.3), _pose(0.3, 0.3, z=0.0), cube).allowed
     assert cf.check(_pose(fx, 0.5, z=1.0), _pose(fx, 0.5, z=0.6), cube).allowed  # 16.4 mm over a 10 mm cube
+
+
+def test_cell20_gripper_and_stray_cube():
+    """Cell 20: the gripper command sets the tip spacing; opening is checked, closing is a grasp."""
+    keep = {k: getattr(cf, k) for k in list(cf.CELL20) + ["_FRAME"]}
+    cf.use_cell("robot20")
+    try:
+        x0, y0, x1, y1 = cf.GLASS
+        at = lambda fx, fy, g, z=0.0: [fx - cf.TOOL_OFFSET[0] - cf.TOOL_OFFSET_TURNING[0], fy - cf.TOOL_OFFSET[1] - cf.TOOL_OFFSET_TURNING[1], z, 0.0, g]
+        cube = lambda cx, cy: dict(cube_blue=_obj(cx, cy, 10, 10))
+        # mid-glass: opening and closing in the air and beside a cube are free; closing around it is a grasp
+        assert cf.check(at(0.5, 0.5, 0.1), at(0.5, 0.5, 0.825), cube(0.2, 0.2)).reason == "free"
+        v = cf.check(at(0.5, 0.5, 0.825), at(0.5, 0.5, 0.1), cube(0.5, 0.5))
+        assert v.allowed and v.pushed == ["cube_blue"]
+        # opening with a cube just outside one tip pushes it: allowed mid-glass ...
+        out = 0.5 + (cf.sep_mm(0.1) / 2 + cf.FINGER_MM[0] / 2 + 6) * MM
+        v = cf.check(at(0.5, 0.5, 0.1), at(0.5, 0.5, 0.825), cube(out, 0.5))
+        assert v.allowed and v.pushed == ["cube_blue"], v.reason
+        # ... blocked when the frame is right behind the cube, and when the tip itself would open into the frame
+        fx = x1 - 22 * MM
+        v = cf.check(at(fx, 0.5, 0.1), at(fx, 0.5, 0.825), cube(x1 - 6 * MM, 0.5))
+        assert not v.allowed and "opening" in v.reason, v.reason
+        fx = x1 - 9 * MM
+        assert "opening against the frame" in cf.check(at(fx, 0.5, 0.1), at(fx, 0.5, 0.825), {}).reason
+        assert cf.check(at(fx, 0.5, 0.1, z=1.0), at(fx, 0.5, 0.825, z=1.0), {}).allowed  # above the frame: free
+        # a cube off the glass (seen only from above) is an obstacle where the top view puts it
+        stray = dict(cube_white=SimpleNamespace(status="off_glass", on=None, height_mm=10, footprint_xy=None, inferred_xy=(0.5, 0.5)))
+        assert not cf.check(at(0.5, 0.5, 0.1, z=1.0), at(0.5, 0.5, 0.1, z=0.3), stray).allowed
+        assert cf.check(at(0.2, 0.2, 0.1, z=1.0), at(0.2, 0.2, 0.1, z=0.3), stray).allowed
+        # a cube "stacked on the pan" may lean beside it: no lowering within a cube of the pan
+        lean = dict(pan=_obj(0.5, 0.5, 20, 7), cube_blue=SimpleNamespace(status="stacked", on="pan", height_mm=10, footprint_xy=None))
+        beside = 0.5 + (10 + 8) * MM
+        assert not cf.check(at(0.5, beside, 0.1, z=1.0), at(0.5, beside, 0.1, z=0.0), lean).allowed
+    finally:
+        for k, val in keep.items():
+            setattr(cf, k, val)

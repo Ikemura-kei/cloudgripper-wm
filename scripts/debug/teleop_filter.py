@@ -14,7 +14,7 @@ A key proposes a move; nothing is sent yet. The view then shows the finger tips 
   a / d   x - / +        r / f   up / down        y   send the proposed move
   w / s   y + / -        q / e   rotation + / -   Y   send it although the filter blocks it
   p       look again for objects not on the glass (tracker.refresh; park the arm out of the way first)
-  o / c   open / close the gripper (cell 20; sent at once, NOT checked by the filter)
+  o / c   open / close the gripper (cell 20): proposed and checked like any other move
   x, Esc  quit           any other key takes the proposed move back
 
 --start is the pose the arm was last COMMANDED to (x, y, height, rotation in degrees): the robot's reported pose
@@ -55,14 +55,18 @@ KEYS = {"a": (0, -1), "d": (0, 1), "w": (1, 1), "s": (1, -1), "r": (2, 1), "f": 
 
 
 def propose(pose, key, steps):
-    """pose [x, y, z, rotation / 180] after one press of `key`, kept within LIMITS."""
-    axis, sign = KEYS[key]
+    """pose [x, y, z, rotation / 180, gripper] after one press of `key`, kept within LIMITS."""
     new = list(pose)
+    if key in GRIP:
+        new[4] = GRIP[key]
+        return new
+    axis, sign = KEYS[key]
     new[axis] = round(float(np.clip(pose[axis] + sign * steps[axis], *LIMITS[axis])), 4)
     return new
 
 
-assert propose([0.5, 0.5, 0.5, 0.0], "d", [0.025, 0.025, 0.05, 0.05]) == [0.525, 0.5, 0.5, 0.0]
+assert propose([0.5, 0.5, 0.5, 0.0, 0.1], "d", [0.025, 0.025, 0.05, 0.05]) == [0.525, 0.5, 0.5, 0.0, 0.1]
+assert propose([0.5, 0.5, 0.5, 0.0, 0.1], "o", [0.025] * 4)[4] == 0.825
 assert propose([0.94, 0.5, 0.02, 0.0], "d", [0.025] * 4)[0] == 0.95 and propose([0.94, 0.5, 0.02, 0.0], "f", [0.025, 0.025, 0.05, 0.05])[2] == 0.0
 
 p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
@@ -88,9 +92,9 @@ elif last.exists():
           f"z {pose[2]} rot {pose[3] * 180:.0f}. If anything else moved the arm since, quit and pass --start.", flush=True)
 else:
     sys.exit("no saved pose yet: pass --start X,Y,Z,ROT_DEG once")
-pose, grip = pose[:4], (pose[4:] or [GRIP["c"]])[0]
+pose = pose[:4] + (pose[4:] or [GRIP["c"]])  # [x, y, z, rotation / 180, gripper]
 last.parent.mkdir(parents=True, exist_ok=True)
-last.write_text(json.dumps(pose + [grip]))
+last.write_text(json.dumps(pose))
 assert all(lo <= v <= hi for v, (lo, hi) in zip(pose, LIMITS)), f"--start outside {LIMITS}"
 steps = [a.step, a.step, 0.05, 0.05]
 collision_filter.use_cell(a.robot)
@@ -121,7 +125,7 @@ def look(refresh=False):
 
 
 def full(q):  # filter pose: [x, y, z, rotation / 180, gripper]
-    return [*q, grip]
+    return q
 
 
 def send(old, new):
@@ -133,6 +137,8 @@ def send(old, new):
         ok &= robot.move_z(new[2]) is not None
     if new[3] != old[3]:
         ok &= robot.rotate(int(round(new[3] * 180))) is not None
+    if new[4] != old[4]:
+        ok &= robot.move_gripper(new[4]) is not None
     return ok
 
 
@@ -141,7 +147,7 @@ def view(base, top, states, pending, verdict, note):
     for q, colour, w in ((pose, (255, 255, 255), 2),) + (((pending, (0, 0, 255) if not verdict.allowed else (0, 255, 255) if verdict.pushed else (0, 255, 0), 2),) if pending else ()):
         for poly in collision_filter.finger_polys(full(q)):
             cv2.polylines(base, [np.int32([tracker.conv.x_y_to_px_py(px, py) for px, py in poly])], True, colour, w)
-    here = f"at x {pose[0]:.3f} y {pose[1]:.3f} z {pose[2]:.2f} ({collision_filter.tip_mm(pose[2]):.0f} mm) rot {pose[3] * 180:.0f} grip {grip}"
+    here = f"at x {pose[0]:.3f} y {pose[1]:.3f} z {pose[2]:.2f} ({collision_filter.tip_mm(pose[2]):.0f} mm) rot {pose[3] * 180:.0f} grip {pose[4]}"
     if pending:
         what = "BLOCKED" if not verdict.allowed else "PUSH (allowed)" if verdict.pushed else "FREE"
         label = f"{what}: {verdict.reason}   |   y = send{' (Y to force)' if not verdict.allowed else ''}, other key = take back   |   {here}"
@@ -155,7 +161,7 @@ keys (click the window first):
   a / d   x - / +        r / f   up / down        y   send the proposed move
   w / s   y + / -        q / e   rotation + / -   Y   send it although the filter blocks it
   p       look again for objects not on the glass
-  o / c   open / close the gripper (not checked by the filter)
+  o / c   open / close the gripper
   x, Esc  quit           any other key takes the proposed move back
 """, flush=True)
 note, pending, verdict, n = "press a move key", None, None, 0
@@ -204,13 +210,8 @@ with open(out / "moves.jsonl", "a") as log:
             log.write(json.dumps(row) + "\n"); log.flush()
             note = f"{row['decision']}: {verdict.reason}"
             pose, pending, verdict = (pending if go else pose), None, None
-            last.write_text(json.dumps(pose + [grip]))
-        elif key in GRIP and a.robot == "robot20":
-            if robot.move_gripper(GRIP[key]) is None:
-                sys.exit("the gripper request failed, stopping (arm left where it is)")
-            grip, note = GRIP[key], f"gripper {'opened' if key == 'o' else 'closed'} (not checked by the filter)"
-            last.write_text(json.dumps(pose + [grip]))
-        elif key in KEYS:
+            last.write_text(json.dumps(pose))
+        elif key in KEYS or key in GRIP and a.robot == "robot20":
             pending = propose(pose, key, steps)
             if pending == pose:
                 pending, note = None, "at the limit"
