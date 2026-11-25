@@ -108,8 +108,9 @@ def provoke():
                 outcome = "PASS" if name in reason else f"blocked for another reason ({reason})"
                 break
             if collision_filter.tip_mm(u._target_pos[2]) < top + 0.5:
+                low = collision_filter.tip_mm(u._target_pos[2])
                 step([0, 0, 1.0, 0, 0], "FILTER FAILED, raising")
-                sys.exit(f"the filter let the tips down to {collision_filter.tip_mm(u._target_pos[2]):.1f} mm over {name} ({top:g} mm tall): stopped")
+                sys.exit(f"the filter let the tips down to {low:.1f} mm over {name} ({top:g} mm tall): arm raised, stopped")
         results.append((name, outcome, collision_filter.tip_mm(u._target_pos[2])))
         step([0, 0, 1.0 - u._target_pos[2], 0, 0], f"up from {name}")
     for name, outcome, tip in results:
