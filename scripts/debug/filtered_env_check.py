@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.10,<3.13"
-# dependencies = ["sam2>=1.1.0", "torch", "torchvision", "numpy", "opencv-python-headless", "huggingface_hub", "pyyaml",
+# dependencies = ["sam2>=1.1.0", "torch", "torchvision", "numpy", "opencv-python", "huggingface_hub", "pyyaml",
 #                 "scikit-learn", "requests", "websocket-client", "gymnasium"]
 # ///
 """Supervised check of FilteredCloudGripperWrapper: random actions through the env with the filter on. MOVES THE ROBOT.
@@ -9,9 +9,13 @@
   uv run scripts/debug/filtered_env_check.py --out DIR [--robot robot20] [--steps 40] [--seed 0]
 
 The env resets (arm up, then home: glass centre, top height, closed), then takes --steps random delta actions, each
-held for 5 steps and biased downwards so that the fingers reach the objects. Watch it: stop with Ctrl-C.
-DIR gets check.mp4 (both views with the masks and each step's verdict) and blocked.jsonl."""
+held for 5 steps and biased downwards so that the fingers reach the objects. A window shows both views with the
+masks, the finger tips and each step's verdict. Watch it: stop with Ctrl-C in the terminal.
+DIR gets check.mp4 (what the window showed, 2 frames per second; written when the script ends) and blocked.jsonl.
+The final pose is saved for teleop_filter.py, which can then start without --start."""
 import argparse
+import json
+import subprocess
 import sys
 import warnings
 from pathlib import Path
@@ -55,10 +59,17 @@ try:
         pose = "x {:.3f} y {:.3f} z {:.2f} rot {:.0f} grip {:.2f}".format(*u._target_pos[:3], u._target_pos[3] * 180, u._target_pos[4])
         frame = draw_states(base, u._last_top_img, env.states, f"step {i}: {'BLOCKED' if env.n_blocked > before else 'sent'}   |   at {pose}")
         if video is None:
-            video = cv2.VideoWriter(str(out / "check.mp4"), cv2.VideoWriter_fourcc(*"mp4v"), 2, frame.shape[1::-1])
+            video = cv2.VideoWriter(str(out / "check_raw.mp4"), cv2.VideoWriter_fourcc(*"mp4v"), 2, frame.shape[1::-1])
         video.write(frame)
+        cv2.imshow(f"filtered env check, {a.robot}", cv2.resize(frame, None, fx=0.75, fy=0.75))
+        cv2.waitKey(1)
 finally:
-    if video is not None:
+    if video is not None:  # re-encode to H.264 so that VS Code, browsers and chat apps play it
         video.release()
+        if subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", str(out / "check_raw.mp4"), "-c:v", "libx264", "-pix_fmt", "yuv420p", str(out / "check.mp4")]).returncode == 0:
+            (out / "check_raw.mp4").unlink()
+    last = Path.home() / f".cache/cloudgripper_wm/{a.robot}_last_pose.json"
+    last.parent.mkdir(parents=True, exist_ok=True)
+    last.write_text(json.dumps([round(float(v), 4) for v in env.unwrapped._target_pos]))
     print(f"{env.n_blocked} of {env.n_steps} steps blocked; arm left at {env.unwrapped._target_pos}")
     env.close()
