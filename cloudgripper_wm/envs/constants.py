@@ -13,3 +13,9 @@ GRIPPER_RANGE = (0.0, 1.0)
 # physical wall sits just outside this square. Used by
 # SafeCloudGripperWrapper to detect objects pushed against the wall.
 WORKSPACE_BOUNDS = (0.0, 1.0)
+
+# Largest change per step on each axis [x, y, z, rotation / 180, gripper] for the play data (Kei, 2026-11-25): about
+# the same physical distance per step on every axis (14 mm in x, y; 6.5 mm of tip height; 45 deg; the gripper opens
+# or closes in one step). 0.05 on every axis made a pick-and-place about 155 steps, these make it about 30.
+# Pass it as CloudGripperEnv(max_delta=PLAY_MAX_DELTA); do not mix datasets collected with different limits.
+PLAY_MAX_DELTA = (0.1, 0.1, 0.25, 0.25, 0.75)

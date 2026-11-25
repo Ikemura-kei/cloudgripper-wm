@@ -9,8 +9,9 @@ rope drag. THEY MOVE THE ROBOT.
     prim.cube_into_slot("cube_blue")
     prim.rope_drag(0, (0.1, 0.0))              # grasp the rope near one end and drag it
 
-Every primitive is a list of single absolute moves, each sent through `env.step`, so the collision filter judges
-each one. A primitive returns True if all its moves were sent. If the filter blocks one, the primitive is given up:
+Every primitive is a list of absolute moves. Each move is sent through `env.step` as delta actions within the env's
+per-axis step limit (`constants.PLAY_MAX_DELTA`), the interface the world model uses, and the collision filter
+judges each step. A primitive returns True if all its moves were sent. If the filter blocks one, the primitive is given up:
 the arm goes to the top height and False is returned; the caller picks the next primitive (Kei, 2026-11-25).
 Positions are read once, when the primitive starts, from `env.states`.
 
@@ -58,24 +59,27 @@ class Primitives:
 
     # ------------------------------------------------------------------ moves
     def goto(self, label: str, x=None, y=None, z=None, rot=None, grip=None) -> bool:
-        """One absolute move of the named axes through the filter; False if it was blocked."""
-        pose = self.u._target_pos.copy()
-        target = np.array([v if v is not None else p for v, p in zip((x, y, z, rot, grip), pose)], np.float32)
-        delta = target - pose
-        if np.allclose(delta, 0, atol=1e-4):
-            return True
-        # wait long enough for the arm to arrive before the next picture: the filter trusts the commanded pose
-        wait, self.u.dwell_time = self.u.dwell_time, (0.5 + 4 * float(np.hypot(*delta[:2])) + 2 * abs(float(delta[2]))
-                                                      + abs(float(delta[3])) + (0.5 if abs(delta[4]) > 1e-4 else 0)) * (wait_scale(self.u))
-        before = self.env.n_blocked
-        try:
-            self.env.step(delta)
-        finally:
-            self.u.dwell_time = wait
-        blocked = self.env.n_blocked > before
-        if self.on_step:
-            self.on_step(label, blocked)
-        return not blocked
+        """Move the named axes to absolute values, in equal delta steps within the env's per-axis limit, each
+        through the filter; False as soon as one step is blocked."""
+        target = np.array([v if v is not None else p for v, p in zip((x, y, z, rot, grip), self.u._target_pos)], np.float32)
+        target[:2] = np.clip(target[0], *self.u._x_range), np.clip(target[1], *self.u._y_range)  # as the env will clip
+        n = int(np.ceil((np.abs(target - self.u._target_pos) / self.u.max_delta).max() - 1e-6))
+        for i in range(n, 0, -1):
+            delta = (target - self.u._target_pos) / i  # what is left, in i equal steps: ends exactly on target
+            # wait long enough for the arm to arrive before the next picture: the filter trusts the commanded pose
+            wait, self.u.dwell_time = self.u.dwell_time, (0.5 + 4 * float(np.hypot(*delta[:2])) + 2 * abs(float(delta[2]))
+                                                          + abs(float(delta[3])) + (0.5 if abs(delta[4]) > 1e-4 else 0)) * wait_scale(self.u)
+            before = self.env.n_blocked
+            try:
+                self.env.step(delta)
+            finally:
+                self.u.dwell_time = wait
+            blocked = self.env.n_blocked > before
+            if self.on_step:
+                self.on_step(label, blocked)
+            if blocked:
+                return False
+        return True
 
     def _run(self, name: str, moves: list[tuple[str, dict]]) -> bool:
         for label, kw in moves:

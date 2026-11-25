@@ -722,8 +722,9 @@ offset with a fixed and a turning part, tip heights). Every constant is in the f
 ## Play primitives (`cloudgripper_wm/primitives.py`)
 
 `Primitives(env)` on a `FilteredCloudGripperWrapper`: `push`, `reset_objects`, `grasp` / `place` / `pick_place`,
-`cube_into_slot`, `rope_drag`. Each is a list of single absolute moves sent through `env.step`, so the collision
-filter judges every move; a blocked move gives the primitive up (arm to the top height, returns False) and the caller
+`cube_into_slot`, `rope_drag`. Each is a list of absolute moves, sent through `env.step` as delta actions within the
+per-axis step limit `constants.PLAY_MAX_DELTA` (x, y 0.1; height 0.25; rotation 0.25; gripper 0.75), the interface
+the world model uses; the collision filter judges every step; a blocked move gives the primitive up (arm to the top height, returns False) and the caller
 picks the next one. Written for cell 20; heights, approach distance and waiting times are first guesses.
 
 - `reset_objects` brings objects far from the glass centre back: cubes are picked up and put on a free spot (near the

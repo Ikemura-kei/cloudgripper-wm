@@ -6,6 +6,7 @@ import pytest
 
 from cloudgripper_wm import collision_filter as cf
 from cloudgripper_wm.envs.cloudgripper_env import CloudGripperEnv
+from cloudgripper_wm.envs.constants import PLAY_MAX_DELTA
 from cloudgripper_wm.envs.filtered_wrapper import FilteredCloudGripperWrapper
 from cloudgripper_wm.envs.robot_pool import RobotPool
 from cloudgripper_wm.primitives import Primitives, z_for_tip
@@ -23,12 +24,14 @@ def prim():
     scene = {}
     tracker = SimpleNamespace(start=lambda b, t: scene, step=lambda b, t: scene, refresh=lambda b, t: scene)
     RobotPool.configure(["robot20"])
-    env = FilteredCloudGripperWrapper(CloudGripperEnv(use_mock=True, dwell_time=0, reset_dwell_time=0), tracker=tracker)
+    env = FilteredCloudGripperWrapper(CloudGripperEnv(use_mock=True, dwell_time=0, reset_dwell_time=0, max_delta=PLAY_MAX_DELTA), tracker=tracker)
     env.reset()
-    log = []
+    log, sent, step = [], [], env.step
+    env.step = lambda a: (sent.append(np.array(a)), step(a))[1]  # every action that reaches the env
     p = Primitives(env, on_step=lambda label, blocked: log.append((label, blocked)))
     p.scene, p.log = scene, log
     yield p
+    assert sent and (np.abs(sent) <= np.array(PLAY_MAX_DELTA) + 1e-6).all()  # only delta actions within the step limits
     env.close()
     for k, val in keep.items():
         setattr(cf, k, val)
@@ -50,7 +53,7 @@ def test_push_and_give_up(prim):
     prim.scene.update(slot=_obj(0.3 - 25 * cf.MM, 0.5, 20, 16))
     prim.log.clear()
     assert not prim.push("pan", (1, 0), 30)
-    assert prim.log[-1] == ("push pan: down", True) and u._target_pos[2] == 1.0  # blocked at the top: nothing to raise
+    assert prim.log[-2] == ("push pan: down", True) and "given up" in prim.log[-1][0] and u._target_pos[2] == 1.0
 
 
 def test_objects_against_the_frame(prim):

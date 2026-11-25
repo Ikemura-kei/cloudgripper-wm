@@ -34,7 +34,7 @@ class CloudGripperEnv(gym.Env):
         self,
         token: str | None = None,
         task: str | None = None,
-        max_delta: float = 0.05,
+        max_delta: float | tuple[float, ...] = 0.05,  # one number, or one per axis (constants.PLAY_MAX_DELTA)
         dwell_time: float = 0.5,
         reset_dwell_time: float = 2.0,
         render_mode: str | None = None,
@@ -46,7 +46,7 @@ class CloudGripperEnv(gym.Env):
     ):
         super().__init__()
         self.render_mode = render_mode
-        self.max_delta = max_delta
+        max_delta = self.max_delta = np.broadcast_to(np.asarray(max_delta, np.float32), (5,)).copy()
         self.dwell_time = dwell_time
         self.reset_dwell_time = reset_dwell_time
         self.task: Task | None = get_task(task)
