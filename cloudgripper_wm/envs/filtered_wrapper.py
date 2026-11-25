@@ -42,6 +42,7 @@ class FilteredCloudGripperWrapper(gym.Wrapper):
             tracker = SceneTracker(self._name)
         self._tracker, self._log_path = tracker, log_path
         self.states: dict | None = None
+        self.held: list[str] = []  # objects in the grasp, from the filter's verdicts
         self.n_steps = self.n_blocked = 0
 
     def _see(self, start: bool = False) -> None:
@@ -71,7 +72,7 @@ class FilteredCloudGripperWrapper(gym.Wrapper):
         if u._restrict_xy:
             candidate[0], candidate[1] = np.clip(candidate[0], *X_RANGE), np.clip(candidate[1], *Y_RANGE)
         candidate[4] = np.clip(candidate[4], *u._gripper_range)
-        verdict = collision_filter.check(current, candidate, self.states)
+        verdict = collision_filter.check(current, candidate, self.states, self.held)
         self.n_steps += 1
         if not verdict.allowed:
             self.n_blocked += 1
@@ -80,6 +81,8 @@ class FilteredCloudGripperWrapper(gym.Wrapper):
                 with open(self._log_path, "a") as f:
                     f.write(json.dumps(dict(t=time.time(), pose0=current.tolist(), pose1=candidate.tolist(), reason=verdict.reason)) + "\n")
             action = np.zeros_like(action)
+        else:
+            self.held = verdict.held
         out = self.env.step(action)
         self._see()
         return out

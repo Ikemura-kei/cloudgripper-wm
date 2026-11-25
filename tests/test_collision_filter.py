@@ -102,14 +102,21 @@ def test_cell20_gripper_and_stray_cube():
         assert "opening against the frame" in cf.check(at(fx, 0.5, 0.1), at(fx, 0.5, 0.825), {}).reason
         assert cf.check(at(fx, 0.5, 0.1, z=1.0), at(fx, 0.5, 0.825, z=1.0), {}).allowed  # above the frame: free
         # a normal grasp, start to end: down around the cube, close, up, down again holding it, sideways, let go
-        c, g = cube(0.5, 0.5), (0.825, 0.1)
-        steps = [(at(0.5, 0.5, g[0], 1.0), at(0.5, 0.5, g[0], 0.0)), (at(0.5, 0.5, g[0]), at(0.5, 0.5, g[1])),
-                 (at(0.5, 0.5, g[1]), at(0.5, 0.5, g[1], 0.3)), (at(0.5, 0.5, g[1], 0.3), at(0.5, 0.5, g[1])),
-                 (at(0.5, 0.5, g[1]), at(0.525, 0.5, g[1])), (at(0.5, 0.5, g[1]), at(0.5, 0.5, g[0]))]
-        assert [cf.check(p0, p1, c).allowed for p0, p1 in steps] == [True] * 6, [cf.check(p0, p1, c).reason for p0, p1 in steps]
+        c, g, held, got = cube(0.5, 0.5), (0.825, 0.1), [], []
+        for p0, p1 in [(at(0.5, 0.5, g[0], 1.0), at(0.5, 0.5, g[0], 0.0)), (at(0.5, 0.5, g[0]), at(0.5, 0.5, g[1])),
+                       (at(0.5, 0.5, g[1]), at(0.5, 0.5, g[1], 0.6)), (at(0.5, 0.5, g[1], 0.6), at(0.5, 0.5, g[1])),
+                       (at(0.5, 0.5, g[1]), at(0.525, 0.5, g[1])), (at(0.5, 0.5, g[1]), at(0.5, 0.5, g[0]))]:
+            v = cf.check(p0, p1, c, held)
+            got.append((v.allowed, v.held))
+            held = v.held
+        assert got == [(True, [])] + [(True, ["cube_blue"])] * 4 + [(True, [])], got
         # ... and letting go of it is allowed right beside the frame, where opening onto a free cube is not
         fx = x1 - 22 * MM
-        assert cf.check(at(fx, 0.5, 0.1), at(fx, 0.5, 0.825), cube(fx, 0.5)).allowed
+        assert cf.check(at(fx, 0.5, 0.1), at(fx, 0.5, 0.825), cube(fx, 0.5), ["cube_blue"]).allowed
+        # closed tips hovering over a cube overlap it like a grasp, but nothing was closed on it: no lowering,
+        # also not after travelling there at a height the filter counts as contact
+        hover = cf.check(at(0.47, 0.5, 0.1, 0.4), at(0.5, 0.5, 0.1, 0.4), c)
+        assert hover.held == [] and not cf.check(at(0.5, 0.5, 0.1, 0.4), at(0.5, 0.5, 0.1, 0.2), c, hover.held).allowed
         # closed tips over a cube that is NOT between them (under one tip only): no lowering
         off = 0.5 + (cf.sep_mm(0.1) / 2 + 7) * MM
         assert not cf.check(at(0.5, 0.5, 0.1, 1.0), at(0.5, 0.5, 0.1), cube(off, 0.5)).allowed

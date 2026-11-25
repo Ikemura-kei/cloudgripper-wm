@@ -147,7 +147,7 @@ def view(base, top, states, pending, verdict, note):
     for q, colour, w in ((pose, (255, 255, 255), 2),) + (((pending, (0, 0, 255) if not verdict.allowed else (0, 255, 255) if verdict.pushed else (0, 255, 0), 2),) if pending else ()):
         for poly in collision_filter.finger_polys(full(q)):
             cv2.polylines(base, [np.int32([tracker.conv.x_y_to_px_py(px, py) for px, py in poly])], True, colour, w)
-    here = f"at x {pose[0]:.3f} y {pose[1]:.3f} z {pose[2]:.2f} ({collision_filter.tip_mm(pose[2]):.0f} mm) rot {pose[3] * 180:.0f} grip {pose[4]}"
+    here = f"at x {pose[0]:.3f} y {pose[1]:.3f} z {pose[2]:.2f} ({collision_filter.tip_mm(pose[2]):.0f} mm) rot {pose[3] * 180:.0f} grip {pose[4]}" + (f" holding {', '.join(held)}" if held else "")
     if pending:
         what = "BLOCKED" if not verdict.allowed else "PUSH (allowed)" if verdict.pushed else "FREE"
         label = f"{what}: {verdict.reason}   |   y = send{' (Y to force)' if not verdict.allowed else ''}, other key = take back   |   {here}"
@@ -165,6 +165,7 @@ keys (click the window first):
   x, Esc  quit           any other key takes the proposed move back
 """, flush=True)
 note, pending, verdict, n = "press a move key", None, None, 0
+held = []  # objects in the grasp, from the sent moves' verdicts (a session starts with nothing held)
 raw, video = out / "teleop_raw.mp4", None
 
 
@@ -210,6 +211,7 @@ with open(out / "moves.jsonl", "a") as log:
                 sys.exit("a move request failed, stopping (arm left where it is)")
             log.write(json.dumps(row) + "\n"); log.flush()
             note = f"{row['decision']}: {verdict.reason}"
+            held = verdict.held if go and verdict.allowed else held
             pose, pending, verdict = (pending if go else pose), None, None
             last.write_text(json.dumps(pose))
         elif key in KEYS or key in GRIP and a.robot == "robot20":
@@ -217,7 +219,7 @@ with open(out / "moves.jsonl", "a") as log:
             if pending == pose:
                 pending, note = None, "at the limit"
             else:
-                verdict = collision_filter.check(full(pose), full(pending), states)
+                verdict = collision_filter.check(full(pose), full(pending), states, held)
         elif key == "p":
             look(refresh=True)
             note = "looked again"

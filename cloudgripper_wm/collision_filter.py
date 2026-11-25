@@ -116,6 +116,7 @@ class Verdict:
     reason: str  # "free", "pushes <names>", or why it is blocked
     pushed: list[str] = field(default_factory=list)  # objects the move touches, with those they touch in turn
     fingers: list[np.ndarray] = field(default_factory=list)  # two (4, 2) polygons at pose1, robot x, y (for drawing)
+    held: list[str] = field(default_factory=list)  # objects in the grasp after this move: pass them to the next check
 
 
 def tip_mm(z: float) -> float:
@@ -194,19 +195,25 @@ def _jammed(chain: list[str], masks: dict, d_cells, extra_mm: float = 0.0) -> st
     return None
 
 
-def _held(pose, masks: dict, tops: dict) -> list[str]:
-    """Objects clamped between the tips at `pose`: the gripper is commanded narrower than the object, so BOTH tips
-    as drawn overlap it (the real ones are stopped by it). They go where the gripper goes."""
+def _clamped(pose, masks: dict, tops: dict) -> list[str]:
+    """Objects the tips clamp at `pose`: the gripper is commanded narrower than the object, so BOTH tips as drawn
+    overlap it (the real ones are stopped by it), and the tips are clearly below its top. Closed tips hovering
+    just above a cube overlap it in the same way: hence the height condition, and hence `held` is only set by a
+    closing move (see check)."""
     tip, (a, b) = tip_mm(pose[2]), (_raster([f]) for f in finger_polys(pose))
-    return [n for n, m in masks.items() if tops[n] > tip - CLEAR_MM and (m & a).any() and (m & b).any()]
+    return [n for n, m in masks.items() if tops[n] > tip + CLEAR_MM and (m & a).any() and (m & b).any()]
 
 
 def _hull(a, b) -> np.ndarray:
     return cv2.convexHull(np.float32(np.vstack([a, b]))).reshape(-1, 2)
 
 
-def check(pose0, pose1, states) -> Verdict:
+def check(pose0, pose1, states, held=()) -> Verdict:
     """May the arm go from pose0 to pose1? `states` is SceneTracker's {name: ObjectState}.
+
+    `held`: the objects in the grasp, which are no obstacle to lowering or to letting go. The caller keeps them:
+    pass the previous sent move's `verdict.held` (a closing move adds what it clamps, an opening move empties it).
+    Without it a grasped object can be carried but not put down again.
 
     The move is taken as the env sends it: x, y first, then z, then rotation, then the gripper.
     """
@@ -217,7 +224,7 @@ def check(pose0, pose1, states) -> Verdict:
         v.reason = f"blocked: {', '.join(missing)} unaccounted for"
         return v
     masks, tops = _obstacles(states)
-    held = _held(pose0, masks, tops)  # a grasped object is no obstacle to lowering or to letting go
+    held = [n for n in held if n in masks]
 
     # the fingers along the move: x, y at the old rotation, then the turn at the new x, y; the gripper stays as it was
     end = pose1.copy(); end[4] = pose0[4]
@@ -272,5 +279,6 @@ def check(pose0, pose1, states) -> Verdict:
                     return v
             chain += [n for n in met if n not in chain]
     v.allowed, v.pushed = True, chain
+    v.held = [] if half > 0 else held + [n for n in _clamped(pose1, masks, tops) if n not in held] if half < 0 else held
     v.reason = f"pushes {', '.join(chain)}" if chain else "free"
     return v
