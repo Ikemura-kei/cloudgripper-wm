@@ -76,13 +76,22 @@ def test_objects_against_the_frame(prim):
 def test_grasp_place_slot_reset_rope(prim):
     prim.scene.update(cube_blue=_obj(0.3, 0.3, 10, 10), slot=_obj(0.6, 0.6, 15, 16, 25.5))
     assert prim.pick_place("cube_blue", (0.5, 0.3)) and prim.env.held == []
+    # something beside the cube where one tip would come down: the tips take the cube's other side direction ...
+    prim.scene.update(pan=_obj(0.3 + 14 * cf.MM, 0.3, 8, 7))
+    assert prim.grasp("cube_blue") and abs(prim.env.unwrapped._target_pos[3] - 0.5) < 1e-6
+    prim.place((0.3, 0.3))
+    # ... and with no room either way the grasp is not tried at all
+    prim.scene.update(cube_white=_obj(0.3, 0.3 + 14 * cf.MM, 8, 10))
+    n = len(prim.log)
+    assert not prim.grasp("cube_blue") and len(prim.log) == n
+    del prim.scene["pan"], prim.scene["cube_white"]
     assert prim.cube_into_slot("cube_blue") and prim.env.held == []
     let_go = [l for l, _ in prim.log].index("cube_blue into slot: let go")
     assert "down" in prim.log[let_go - 1][0] and not prim.log[let_go - 1][1]
     prim.scene.clear()
     prim.scene.update(cube_white=_obj(0.75, 0.75, 10, 10), pan=_obj(0.45, 0.5, 20, 7))  # only the cube is far from the centre
     assert prim.reset_objects() == {"cube_white": True}  # in a corner: no grasp fits, it is pushed out diagonally
-    assert any("grasp cube_white" in l and b for l, b in prim.log) and prim.log[-1][0] == "push cube_white: up"
+    assert not any("grasp cube_white" in l for l, _ in prim.log) and prim.log[-1][0] == "push cube_white: up"
     rope = _obj(0.5, 0.2, 60, 8, 8); rope.footprint_xy = np.array([[x, 0.2 + s * 4 * cf.MM] for s in (-1, 1) for x in np.linspace(0.3, 0.7, 30)[::s]])
     prim.scene.clear(); prim.scene.update(rope=rope)
     assert prim.rope_drag(0, (0.0, 0.1)) and prim.env.held == []

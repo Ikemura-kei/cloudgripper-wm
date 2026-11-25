@@ -166,10 +166,21 @@ class Primitives:
         x0, y0, x1, y1 = cf.GLASS
         reach, near = 19 * cf.MM, 7 * cf.MM
         at_x, at_y = c[0] < x0 + reach or c[0] > x1 - reach, c[1] < y0 + reach or c[1] > y1 - reach
-        if at_x != at_y:  # one frame side: of the cube's two side directions, take the one along that side
-            th = max((th, th + np.pi / 2), key=lambda t: abs(np.sin(t)) if at_x else abs(np.cos(t)))
+        ths = [th, th + np.pi / 2]  # the cube's two side directions
+        if at_x != at_y:  # one frame side: the direction along that side first
+            ths.sort(key=lambda t: abs(np.sin(t)) if at_x else abs(np.cos(t)), reverse=True)
         c += EDGE_SHIFT_MM * cf.MM * np.array([int(c[0] < x0 + near) - int(c[0] > x1 - near), int(c[1] < y0 + near) - int(c[1] > y1 - near)])
-        rot = (th % np.pi) / np.pi
+        # Ask the filter before moving: take the first direction in which the open tips can go down around the cube
+        # (the other may put a tip on the rope or a neighbour). If neither can, give up without moving.
+        for th in ths:
+            rot = (th % np.pi) / np.pi
+            over = [*self._cmd(c, rot).values(), 1.0, rot, self.open]
+            verdict = cf.check(over, [*over[:2], 0.0, rot, self.open], self.env.states)
+            if verdict.allowed:
+                break
+        else:
+            print(f"grasp {name}: no room for the tips ({verdict.reason}), not tried", flush=True)
+            return False
         ok = self._run(f"grasp {name}", [("up", dict(z=1.0)), ("open", dict(grip=self.open)), ("turn", dict(rot=rot)),
                                           ("over it", self._cmd(c, rot)), ("down", dict(z=0.0)), ("close", dict(grip=self.closed))])
         if ok and name not in self.env.held:  # closed on nothing
