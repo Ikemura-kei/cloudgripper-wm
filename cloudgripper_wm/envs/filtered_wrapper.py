@@ -3,8 +3,8 @@
     env = FilteredCloudGripperWrapper(gym.make("cloudgripper/Gripper-v0", ...))
     # or: CloudGripperWorld(robot_names=["robot20"], collision_filter={})
 
-On reset the arm is raised first (the env's own reset travels to the home pose at the height the arm is at), then
-`SceneTracker.start` finds the objects. On every step `collision_filter.check` judges the commanded pose against
+On reset the arm is raised first (the env's own reset travels to the home pose at the height the arm is at), the
+gripper opens there so that anything it still holds drops onto the glass, then `SceneTracker.start` finds the objects. On every step `collision_filter.check` judges the commanded pose against
 the objects as seen after the previous step; a blocked action is replaced by a zero action, as in
 SafeCloudGripperWrapper, so the recorded action is the executed one. Needs a CUDA GPU and the `perception` extra.
 
@@ -64,6 +64,16 @@ class FilteredCloudGripperWrapper(gym.Wrapper):
             (u.robot.move_z_ws if u.use_ws else u.robot.move_z)(1.0)
             time.sleep(u.reset_dwell_time)
         obs, info = self.env.reset(**kwargs)
+        if self._name in CELL_GRIPPER_RANGE:
+            # Open at the home pose, top height: whatever the gripper still holds from before (a run that was
+            # stopped, a primitive given up) drops onto the glass, where it can be seen and found. Then look again.
+            u._target_pos[4] = u._gripper_range[1]
+            u._send_absolute()
+            time.sleep(u.reset_dwell_time)
+            top, base, state = u._observe()
+            u._last_top_img = top
+            obs, info = {"state": state}, {**info, "pixels_base": base}
+        self.held = []
         self._see(start=True)
         lost = [n for n, s in self.states.items() if s.status == "unaccounted"]
         if lost:

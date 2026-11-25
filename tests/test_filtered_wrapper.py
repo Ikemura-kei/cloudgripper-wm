@@ -21,10 +21,11 @@ def test_blocked_action_is_zeroed():
     try:
         env.reset()
         u = env.unwrapped
-        assert u._target_pos[4] == np.float32(0.1)  # the home pose's gripper 0.0 is raised to cell 20's closed value
+        assert u._target_pos[4] == np.float32(0.825)  # reset opens the gripper (cell 20's open value): anything held drops
         env.step(np.float32([0.2, 0.2, 0, 0, 0]))  # sideways in the air: free
         assert np.allclose(u._target_pos[:2], [0.7, 0.7]) and env.n_blocked == 0
         env.step(np.float32([-0.2, -0.2, 0, 0, 0]))  # back over the cube (the home pose is the glass centre)
+        env.step(np.float32([0, 0, 0, 0, -0.725]))  # close in the air: free (open, the tips would go down around the cube)
         env.step(np.float32([0, 0, -0.4, 0, 0]))  # down to 16 mm, above the 10 mm cube: free
         env.step(np.float32([0, 0, -0.6, 0, 0]))  # down onto the cube: blocked, pose held
         assert env.n_blocked == 1 and np.isclose(u._target_pos[2], 0.6)

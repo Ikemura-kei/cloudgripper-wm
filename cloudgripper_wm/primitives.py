@@ -109,9 +109,13 @@ class Primitives:
         x, y = np.asarray(tips_xy, float) - cf.TOOL_OFFSET - turn
         return dict(x=float(x), y=float(y))
 
-    def _on_glass(self, name: str):
+    def _on_glass(self, name: str, say: bool = True):
         s = self.env.states.get(name)
-        return s if s is not None and s.status == "on_glass" and s.footprint_xy is not None else None
+        if s is not None and s.status == "on_glass" and s.footprint_xy is not None:
+            return s
+        if say:
+            print(f"{name} is not on the glass ({'not in the scene' if s is None else s.status + (' on ' + s.on if s.on else '')}): nothing done", flush=True)
+        return None
 
     # ------------------------------------------------------------------ primitives
     def push(self, name: str, direction, dist_mm: float) -> bool:
@@ -152,7 +156,7 @@ class Primitives:
         (the push is given up): turn them with a sideways push first, or grasp the slot, when that happens often."""
         done = {}
         far = lambda n: float(np.linalg.norm(np.subtract(self.env.states[n].xy, CENTRE)))
-        for name in sorted((n for n in self.env.states if n != "rope" and self._on_glass(n)), key=far, reverse=True):
+        for name in sorted((n for n in self.env.states if n != "rope" and self._on_glass(n, say=False)), key=far, reverse=True):
             if far(name) <= CENTRE_RADIUS:  # read again: an earlier move may have moved it
                 continue
             if name.startswith("cube"):
@@ -160,7 +164,7 @@ class Primitives:
                     name, np.subtract(CENTRE, self.env.states[name].xy), (far(name) - CENTRE_RADIUS) / cf.MM)  # a corner: push it out
             else:
                 done[name] = self.push(name, np.subtract(CENTRE, self.env.states[name].xy), (far(name) - CENTRE_RADIUS) / cf.MM)
-        if self._on_glass("rope"):
+        if self._on_glass("rope", say=False):
             ends = self._rope_ends()
             i = int(np.argmax([np.linalg.norm(e - CENTRE) for e, _ in ends]))
             to = np.subtract(CENTRE, ends[i][0])
