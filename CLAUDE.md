@@ -124,7 +124,10 @@ uv run python scripts/data/inspect_data.py data/my_run/my_run.lance --save-dir /
 
 ### Dev robot
 
-- **robot23** is the designated development robot for testing without hardware setup
+- **robot20** is the development robot since 2026-11-25 (working gripper and height axis; its camera files and the
+  filter's numbers are ours). robot23's gripper is off its servo, robot22's height axis does not respond.
+  Older scripts still default to robot23.
+- On robot20 the gripper is closed at 0.1 and open at 0.825; x beyond 0.88 is not visible from below.
 - Set the token before any real-robot code: `export CLOUDGRIPPER_TOKEN=<token>`
   - Do NOT commit the token to any file — keep it in your shell environment only
 - Quick smoke test on real hardware: `uv run python scripts/debug/test_connection.py`
@@ -667,3 +670,37 @@ Test the `Task` subclasses directly without the env:
 - The `"pixels"` key in obs/info is **always** the top camera — this is what stable-worldmodel's MegaWrapper picks up for resizing and dataset storage
 - **Adding a new task:** (1) subclass `Task` in `cloudgripper_wm/tasks/`, (2) add to `TASK_REGISTRY` in `tasks/__init__.py`, (3) add a `gymnasium.register()` call in `envs/__init__.py`. The env code itself should not change.
 - Task reward/success implementations can start as stubs — world model training is self-supervised and doesn't need them. Fill in real logic when RL or MPC evaluation is needed.
+
+## Perception (`cloudgripper_wm/perception/`)
+
+`SceneTracker` finds, names and tracks the objects of cell 20 or 23 with SAM 2.1 in both camera views (`start` at a
+parking pose, `step` every control step, `refresh` at later parking poses). On cell 20 each object is prompted by its
+colour first, with the shape steps as the fallback. It is written for one setup only: these cells and their
+five known objects (two cubes, slot, pan, rope). **Read `cloudgripper_wm/perception/README.md` before changing it**: it
+lists every assumption and what is and is not tested. The objects' STL files are in `perception/assets/`.
+
+- Needs the `perception` extra (`sam2`) and a CUDA GPU.
+- `scripts/debug/perception_replay.py SWEEP_DIR [...]` (a uv inline-metadata script) replays recorded sweeps through
+  it without a robot and writes a side-by-side video.
+- `tests/test_perception_inventory.py` checks the naming logic without a GPU.
+- Not yet connected to `SafeCloudGripperWrapper`, which still builds its heightmap from a green colour mask.
+- The robot's reported `x_norm`, `y_norm` trail the real arm by seconds to minutes (measured 2026-11-23): use the
+  commanded pose.
+
+## Collision filter (`cloudgripper_wm/collision_filter.py`)
+
+`check(pose0, pose1, states)` decides from `SceneTracker`'s states whether one commanded move may jam the gripper:
+pushing a free object is allowed; pushing an object (or a chain of touching objects) against the frame, a finger
+against the frame, and lowering onto something are blocked. Pure geometry, no GPU. The module holds cell 23's numbers
+by default; `use_cell("robot20")` switches to cell 20's (`CELL20`: glass, tip spacing from the gripper command, tool
+offset with a fixed and a turning part, tip heights). Every constant is in the file with how it was measured.
+
+- Tip height against the height command was measured on 2026-11-24 (`Z_TO_TIP_MM`: 6 mm at 0, 15 mm at 0.5, 22 mm at 1):
+  the tips never reach the glass, and at the lowest point they are 1 mm below the pan's top and 4 mm below a cube's.
+- The finger numbers are for the gripper stuck open (2026-11-24); re-measure after the repair.
+- `scripts/debug/perception_replay.py` runs it over a recording that has `cmd_xy` and draws the assumed fingers.
+- `tests/test_collision_filter.py` checks the rules on made-up scenes.
+- `scripts/debug/calibrate_cam_to_robot.py` makes a cell's pixel-to-robot file (it moves the robot).
+- `scripts/debug/teleop_filter.py` (default robot20, records a video of the session) is the by-eye test: each key proposes one move, the live view shows the masks, the
+  finger tips now and after the move, and the verdict; `y` sends it, any other key takes it back. It moves the robot.
+- Not yet connected to `SafeCloudGripperWrapper`.

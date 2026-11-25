@@ -18,6 +18,10 @@ dependencies = [
     "websocket-client>=1.0.0",
 ]
 
+[project.optional-dependencies]
+# cloudgripper_wm.perception (SAM 2 object tracking for cell 23; see its README.md)
+perception = ["sam2>=1.1.0"]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
