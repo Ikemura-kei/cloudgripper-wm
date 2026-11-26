@@ -740,9 +740,14 @@ picks the next one. Written for cell 20; heights, approach distance and waiting 
   push is asked of the filter before anything moves), then the grasp is tried once more.
 - `rope_drag` grasps the rope across it at the first spot, from 12 mm in from the end and then every 8 mm along the
   whole rope, where the filter lets the open tips go down: a rope lying along the frame is taken where it leaves it.
-- Not written yet: taking a cube or the rope out of the slot, the rope into the slot.
+- `cube_out_of_slot(cube, way)`: push (closed tips 2.5 mm above the slot's prongs push the cube out along the notch,
+  out of the end facing the glass centre; worked on robot20, 2026-11-26), drop, swing or grasp (not yet run). Then the
+  arm goes home and `look_again()` (the wrapper's refresh) says whether the cube is on the glass: a step alone keeps
+  a cube that left the slot "stacked on slot".
+- Not written yet: the rope into and out of the slot.
 - `tests/test_primitives.py` runs the sequences on the mock robot. `scripts/debug/primitives_check.py --out DIR
   reset push:pan:1,0:30 ...` is the supervised live run (window + video; `--mock` for a dry run).
   `cloudgripper_wm/envs/filter_view.py` is the window/video helper both debug scripts share.
 - Run on robot20: `pick_place` of a cube (2026-11-25); `push` of the pan, making room before a grasp, `rope_drag`
-  (2026-11-26). Not yet: the pan and slot grasps, `cube_into_slot`, `reset_objects`.
+  (2026-11-26), `cube_into_slot` and `cube_out_of_slot` by pushing (2026-11-26). Not yet: the pan and slot
+  grasps, `reset_objects` as a whole.

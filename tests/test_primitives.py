@@ -184,8 +184,14 @@ def test_cube_out_of_slot(prim, way):
     slot = _obj(0.4, 0.5, 15, 16, 25.5)  # long along y: the notch runs along x
     cube = SimpleNamespace(status="stacked", on="slot", height_mm=10, footprint_xy=None, inferred_xy=(0.4, 0.5), in_notch=True)
     prim.scene.update(slot=slot, cube_blue=cube)
-    assert prim.cube_out_of_slot("cube_blue", way) and prim.env.held == [], prim.log[-3:]
+    # the mock scene does not move: as long as the tracker still reports it in the slot, it is not done
+    assert not prim.cube_out_of_slot("cube_blue", way) and prim.log[-1][0] == "cube_blue out of slot: back home to look"
     assert not any(b for _, b in prim.log), [l for l, b in prim.log if b]  # nothing blocked
+    # looking again from home finds it on the glass: done
+    prim.env._tracker.refresh = lambda b, t: (prim.scene.update(cube_blue=_obj(0.45, 0.5, 10, 10)), prim.scene)[1]
+    prim.scene["cube_blue"] = cube
+    assert prim.cube_out_of_slot("cube_blue", way) and prim.env.held == []
+    prim.scene["cube_blue"] = cube
     # beside the slot rather than in its notch: the slot grows by a cube, nothing is tried
     cube.in_notch = False; n = len(prim.log)
     assert not prim.cube_out_of_slot("cube_blue", way) and len(prim.log) == n

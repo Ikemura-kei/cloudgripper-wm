@@ -351,12 +351,12 @@ class Primitives:
             rot = ((np.arctan2(d[1], d[0]) + np.pi / 2) % np.pi) / np.pi
             half = cf.FINGER_MM[1] / 2  # the tips reach this far along the push
             start, end = c - d * (7.5 + half + 3) * mm, c + d * (7.5 + 2 - half) * mm  # the cube's back face 2 mm past the slot's side
-            return self._run(f"{cube} out of slot (push)", [("up", dict(z=1.0)), ("close", dict(grip=self.closed)), ("turn", dict(rot=rot)),
+            ok = self._run(f"{cube} out of slot (push)", [("up", dict(z=1.0)), ("close", dict(grip=self.closed)), ("turn", dict(rot=rot)),
                                                             ("behind it", self._cmd(start, rot)), ("down", dict(z=z_for_tip(SLOT_TOP_MM + SLOT_PUSH_ABOVE_MM))),
                                                             ("push", self._cmd(end, rot)), ("up", dict(z=1.0))])
-        if way == "drop":
-            return self.grasp("slot") and self.place(self._free_spot("slot"), tip_mm=cf.tip_mm(1.0))
-        if way == "swing":
+        elif way == "drop":
+            ok = self.grasp("slot") and self.place(self._free_spot("slot"), tip_mm=cf.tip_mm(1.0))
+        elif way == "swing":
             spot = self._free_spot("slot")
             if not (self.grasp("slot", along_mm=SWING_GRIP_MM) and self.goto(f"{cube} out of slot (swing): carry", **self._cmd(spot, float(self.u._target_pos[3])))):
                 return False
@@ -366,16 +366,24 @@ class Primitives:
                 if not (self.goto(f"{cube} out of slot (swing) {k + 1}", rot=r1) and self.goto(f"{cube} out of slot (swing) {k + 1} back", rot=r0)):
                     self._give_up(f"{cube} out of slot (swing)")
                     return False
-            return self.place(spot)  # back at the carry's rotation: the tips are over the spot again
-        if way == "grasp":
+            ok = self.place(spot)  # back at the carry's rotation: the tips are over the spot again
+        elif way == "grasp":
             rot = ((np.arctan2(notch[1], notch[0])) % np.pi) / np.pi  # tips at the notch's two open ends
             ok = self._run(f"{cube} out of slot (grasp)", [("up", dict(z=1.0)), ("open", dict(grip=self.open)), ("turn", dict(rot=rot)),
                                                            ("over it", self._cmd(c, rot)), ("down", dict(z=z_for_tip(SLOT_FLOOR_MM + 2.5))),
                                                            ("close", dict(grip=self.closed)), ("lift", dict(z=1.0))])
             # ponytail: the filter takes the slot, not the cube, as clamped (the cube has no outline of its own up
             # there); harmless here, the slot is only "held" until the cube is let go
-            return ok and self.place(self._free_spot(cube))
-        raise ValueError(f"way must be push, drop, swing or grasp, not {way!r}")
+            ok = ok and self.place(self._free_spot(cube))
+        else:
+            raise ValueError(f"way must be push, drop, swing or grasp, not {way!r}")
+        # did it come out? From home, where nothing hides the slot (the tracker only knows after looking again)
+        if not (ok and self.goto(f"{cube} out of slot: back home to look", x=0.5, y=0.5)):
+            return False
+        st = self.env.look_again()[cube]
+        if st.status != "on_glass":
+            print(f"{cube} out of slot ({way}): still {st.status}{' on ' + st.on if st.on else ''} afterwards", flush=True)
+        return st.status == "on_glass"
 
     def _rope_ends(self, inset_mm: float = 12.0):
         """[(point on the rope inset_mm in from the end, rope direction there (rad))] for the rope's two ends, from its

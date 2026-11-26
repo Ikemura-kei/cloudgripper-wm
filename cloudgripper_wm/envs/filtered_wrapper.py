@@ -58,6 +58,13 @@ class FilteredCloudGripperWrapper(gym.Wrapper):
         if any(s.status == "unaccounted" for s in self.states.values()):  # blocks every move: look again once
             self.states = self._tracker.refresh(base, top)
 
+    def look_again(self) -> dict:
+        """Look again, with the latest pictures, for objects that are not on the glass (a cube that left the slot is
+        "stacked" until then: a step only tracks). Call it with the arm parked out of the way, as for reset."""
+        u = self.unwrapped
+        self.states = self._tracker.refresh(self._proc.undistort_fish_eye(u._last_base_img), u._last_top_img)
+        return self.states
+
     def reset(self, **kwargs):
         u = self.unwrapped
         if u._target_pos[2] < 1.0 or not np.isfinite(u._last_sent_pos[2]):  # up first, then the env's travel home
