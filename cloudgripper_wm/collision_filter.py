@@ -55,6 +55,7 @@ TOOL_OFFSET = (0.020, 0.0)
 # ponytail: measured with the fingers closed; if the open fingers' tips sit higher or lower, they are off
 Z_TO_TIP_MM = ((0.0, 6.0), (0.5, 15.0), (1.0, 22.0))  # interpolated in between
 CLEAR_MM = 2.0  # a tip less than this above an object's top counts as touching it (ruler and height error)
+HELD_BELOW_MM = 0.6  # a held object's bottom below the tips' (grasped from the glass: the tips are 0.6 mm up at z 0)
 
 # Sideways: a finger this close to an object counts as touching it. Tuned by eye in the teleop (Kei, 2026-11-24,
 # gripper closed): at 4 the filter reported contact two steps before the real one, at 1.5 it was "kind of neat so far".
@@ -250,8 +251,14 @@ def check(pose0, pose1, states, held=()) -> Verdict:
         hit = [n for n, m in masks.items() if n not in held and tops[n] > tip1 - CLEAR_MM and (m & under).any()]
         if FRAME_MM > tip1 - CLEAR_MM and (_FRAME & under).any():
             hit.append("the frame")
+        if held:  # what is held fills the space between the tips, its bottom HELD_BELOW_MM below theirs
+            between = _grow(_raster([_hull(*finger_polys(end))]), LOWER_MM)
+            bottom = tip1 - HELD_BELOW_MM
+            hit += [n for n, m in masks.items() if n not in hit and tops[n] > bottom - CLEAR_MM and (m & between).any()]
+            if "the frame" not in hit and FRAME_MM > bottom - CLEAR_MM and (_FRAME & between).any():
+                hit.append("the frame")
         if hit:
-            v.reason = f"blocked: lowering onto {', '.join(hit)}"
+            v.reason = f"blocked: lowering {', '.join(held) + ' ' if held else ''}onto {', '.join(hit)}"
             return v
 
     # sideways: the lowest the tips get decides what they can touch

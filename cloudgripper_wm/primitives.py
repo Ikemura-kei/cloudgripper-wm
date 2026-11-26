@@ -34,7 +34,8 @@ CENTRE_RADIUS = 0.15       # reset: objects farther than this (21 mm) from CENTR
 PUSH_TIP_MM = 3.0          # tip height while pushing an object that stands clear of the frame
 OVER_FRAME_TIP_MM = 8.6    # ... and when the push starts over the frame (6.25 mm): only objects 10 mm and taller
 APPROACH_MM = 10.0         # a push starts this far behind the object
-SLOT_DROP_MM = 2.2         # a cube is let go with the tips this far above the slot's top
+SLOT_DROP_MM = 3.0         # a cube is let go with the tips this far above the slot's top (its bottom 2.4 mm above;
+                           # the filter wants CLEAR_MM between a held object's bottom and what is under it)
 EDGE_SHIFT_MM = 2.0        # grasping a cube that lies against the frame: the tips go this far towards the glass
 PAN_HANDLE_MM = (15.5, 13.0, 11.0)  # centre of the pan's round part to where the handle is held, tried in this order; Pan.stl: handle from 10 to 21 mm out
 ROOM_MM, ROOM_PUSH_MM = 8.0, 25.0  # clutter: push length, and the room around the object it must leave (a tip is 5 mm)
@@ -317,8 +318,8 @@ class Primitives:
     def cube_into_slot(self, cube: str) -> bool:
         """Grasp the cube and let it go just above the slot's notch, tips along the notch (the slot's short side).
 
-        The slot stands with its notch up (16 mm tall): the cube is dropped from SLOT_DROP_MM above its top, which
-        is as low as the filter lets the tips go over the slot."""
+        The slot stands with its notch up (16 mm tall): the cube is dropped with the tips SLOT_DROP_MM above its top, as
+        low as the filter lets a held cube go over the slot."""
         slot = self._on_glass("slot")
         if slot is None or not self.grasp(cube):
             return False

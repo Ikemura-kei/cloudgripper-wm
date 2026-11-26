@@ -136,6 +136,14 @@ def test_cell20_gripper_and_stray_cube():
         v = cf.check(over, there, carried, ["cube_blue"])
         assert v.allowed and v.held == ["cube_blue"], v.reason
         assert cf.check(there, at(x0 + 12 * MM, 0.5, 0.825, z=1.0), carried, ["cube_blue"]).allowed
+        # a held cube sits HELD_BELOW_MM lower than the tips (Kei, 2026-11-26: a carried cube pressed onto the slot's
+        # edge): tips 2.3 mm above another cube are fine empty-handed, not with a cube between them
+        other = dict(cube_white=_obj(0.5, 0.5, 10, 10), cube_blue=SimpleNamespace(status="stacked", on="cube_white", height_mm=10, footprint_xy=None))
+        z = 0.5 * (12.3 - 0.6) / 12.9  # tips 12.3 mm up
+        assert cf.check(at(0.5, 0.5, 0.1, z=1.0), at(0.5, 0.5, 0.1, z=z), dict(cube_white=other["cube_white"])).allowed
+        v = cf.check(at(0.5, 0.5, 0.1, z=1.0), at(0.5, 0.5, 0.1, z=z), other, ["cube_blue"])
+        assert not v.allowed and "lowering cube_blue onto cube_white" in v.reason, v.reason
+        assert cf.check(at(0.5, 0.5, 0.1, z=1.0), at(0.5, 0.5, 0.1, z=0.5), other, ["cube_blue"]).allowed  # 2.9 mm above
         # hidden from both cameras by the gripper while held: not "unaccounted"
         assert cf.check(over, there, dict(cube_blue=SimpleNamespace(status="unaccounted", on=None, height_mm=10, footprint_xy=None)), ["cube_blue"]).allowed
     finally:

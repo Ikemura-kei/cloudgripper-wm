@@ -709,6 +709,9 @@ offset with a fixed and a turning part, tip heights). Every constant is in the f
   finger tips now and after the move, and the verdict; `y` sends it, any other key takes it back. It moves the robot.
 - A cube that is off the glass is an obstacle too: an object with a cube "stacked" on it grows by one cube all round
   (the cube may lean beside it), and a cube on nothing we see from below gets a square where the top view puts it.
+- Held objects (set by a closing move that clamps them, cleared by opening) are no obstacle and make nothing they are
+  "stacked on" bigger; when lowering, the space between the tips counts as filled by them, with their bottom
+  `HELD_BELOW_MM` (0.6) below the tips'.
 - **In the env:** `cloudgripper_wm/envs/filtered_wrapper.py`, `FilteredCloudGripperWrapper(env)` or
   `CloudGripperWorld(robot_names=["robot20"], collision_filter={})`. Reset raises the arm before the env travels
   home, then finds the objects; every step is checked against the objects seen after the previous step and a
