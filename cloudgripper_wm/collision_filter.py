@@ -154,11 +154,18 @@ def _frame() -> np.ndarray:
 _FRAME = _frame()
 
 
-def _obstacles(states) -> tuple[dict, dict]:
-    """Rasterised footprints and top heights (mm) of everything a finger can meet, by object name."""
-    tops = {n: s.height_mm for n, s in states.items() if s.status == "on_glass" and s.footprint_xy is not None}
+def _obstacles(states, held=()) -> tuple[dict, dict]:
+    """Rasterised footprints and top heights (mm) of everything a finger can meet, by object name. Held objects are
+    none: they move with the fingers (lifted, the tracker sees them "stacked" on whatever they are carried over;
+    prim_12, 2026-11-26, that grew the slot under a carried cube and blocked the carry and the release).
+
+    ponytail: a held object's own outline is taken as inside the fingers' (true for a cube or the slot held low);
+    the pan held by its handle sticks out up to 16 mm, unchecked."""
+    tops = {n: s.height_mm for n, s in states.items() if n not in held and s.status == "on_glass" and s.footprint_xy is not None}
     masks = {n: _raster([states[n].footprint_xy]) for n in tops}
     for n, s in states.items():
+        if n in held:
+            continue
         if s.status == "stacked" and s.on in tops:
             # "stacked on X" only means off the glass and touching X in the top view: the cube may also lean
             # beside X (on the rope, say). So X gets the cube's height and grows by a cube all round.
@@ -219,12 +226,12 @@ def check(pose0, pose1, states, held=()) -> Verdict:
     """
     pose0, pose1 = np.asarray(pose0, float), np.asarray(pose1, float)
     v = Verdict(False, "", fingers=finger_polys(pose1))
-    missing = [n for n, s in states.items() if s.status == "unaccounted"]
+    missing = [n for n, s in states.items() if s.status == "unaccounted" and n not in held]
     if missing:
         v.reason = f"blocked: {', '.join(missing)} unaccounted for"
         return v
-    masks, tops = _obstacles(states)
-    held = [n for n in held if n in masks]
+    held = [n for n in held if n in states]
+    masks, tops = _obstacles(states, held)
 
     # the fingers along the move: x, y at the old rotation, then the turn at the new x, y; the gripper stays as it was
     end = pose1.copy(); end[4] = pose0[4]

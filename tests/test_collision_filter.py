@@ -128,6 +128,16 @@ def test_cell20_gripper_and_stray_cube():
         lean = dict(pan=_obj(0.5, 0.5, 20, 7), cube_blue=SimpleNamespace(status="stacked", on="pan", height_mm=10, footprint_xy=None))
         beside = 0.5 + (10 + 8) * MM
         assert not cf.check(at(0.5, beside, 0.1, z=1.0), at(0.5, beside, 0.1, z=0.0), lean).allowed
+        # a cube carried over the slot near the frame: the tracker sees it "stacked on slot" (prim_12, 2026-11-26).
+        # Held, it is no obstacle and does not grow the slot: carrying it there and letting go are allowed
+        carried = dict(slot=_obj(x0 + 12 * MM, 0.5, 15, 16), cube_blue=SimpleNamespace(status="stacked", on="slot", height_mm=10, footprint_xy=None))
+        over, there = at(0.3, 0.5, 0.1, z=1.0), at(x0 + 12 * MM, 0.5, 0.1, z=1.0)
+        assert not cf.check(over, there, carried).allowed  # as it was: the slot taken as 26 mm tall and a cube wider
+        v = cf.check(over, there, carried, ["cube_blue"])
+        assert v.allowed and v.held == ["cube_blue"], v.reason
+        assert cf.check(there, at(x0 + 12 * MM, 0.5, 0.825, z=1.0), carried, ["cube_blue"]).allowed
+        # hidden from both cameras by the gripper while held: not "unaccounted"
+        assert cf.check(over, there, dict(cube_blue=SimpleNamespace(status="unaccounted", on=None, height_mm=10, footprint_xy=None)), ["cube_blue"]).allowed
     finally:
         for k, val in keep.items():
             setattr(cf, k, val)
