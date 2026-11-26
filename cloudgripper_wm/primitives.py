@@ -43,6 +43,8 @@ ROPE_STEP_MM = 8.0  # rope drag: grasp points tried every this far along the rop
 SLOT_TOP_MM, SLOT_FLOOR_MM = 16.0, 5.0  # Slot.stl (stored upside down): walls' top, notch floor; the notch is 13.5 mm
                            # wide and 11 mm deep, so a seated cube's top (15 mm) is below the walls
 SLOT_PUSH_ABOVE_MM = 2.5   # cube out of slot by pushing: the tip this far above the notch floor
+NOTCH_PUSH_GAP_MM = 4.0    # ... and it comes down this far from the slot's side (2 mm was refused in prim_17: the tracked
+                           # outline is about 1 mm larger than the slot, and the filter adds LOWER_MM)
 SLOT_WALL_MM = 9.75        # centre of either 6 mm wall from the slot's centre, along its length (where it is grasped)
 SWINGS = 2                 # cube out of slot by swinging: turns to and fro
 FREE_MM = 22.0             # reset: a cube is put down at least this far from every other object's outline
@@ -350,7 +352,7 @@ class Primitives:
         reason = ""
         for side in (1, -1):  # the other tip beside one end of the slot or the other: the first the filter allows
             mid = along * side * cf.sep_mm(self.open) / 2 * mm  # tips' midpoint from the tip in the notch
-            start, end = c - d * (7.5 + half + 2) * mm + mid, c + d * (7.5 + 2 - half) * mm + mid  # cube's back face 2 mm out
+            start, end = c - d * (7.5 + half + NOTCH_PUSH_GAP_MM) * mm + mid, c + d * (7.5 + 2 - half) * mm + mid  # cube's back face 2 mm out
             p0 = [*self._cmd(start, rot).values(), 1.0, rot, self.open]
             p1, p2 = [*p0[:2], z, rot, self.open], [*self._cmd(end, rot).values(), z, rot, self.open]
             v = cf.check(p0, p1, self.env.states)
