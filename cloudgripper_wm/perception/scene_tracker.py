@@ -195,9 +195,10 @@ def assign_inventory(cands: list[dict], wanted: set[str]) -> dict[str, int]:
 
 
 def _top_cube_name(hsv) -> str | None:
-    """Which cube a top-view colour is (blue cube 109/240/142, white cube 44/31/216 on 2026-11-23), or None."""
+    """Which cube a top-view colour is (blue cube 109/240/142, white cube 44/31/216 on 2026-11-23; the blue cube
+    tilted in the slot, in shade: 110/237/110 on 2026-11-26), or None."""
     h, sat, val = hsv
-    return "cube_blue" if 95 <= h <= 130 and sat > 120 and val > 110 else "cube_white" if sat < 70 and val > 150 else None
+    return "cube_blue" if 95 <= h <= 130 and sat > 120 and val > 80 else "cube_white" if sat < 70 and val > 150 else None
 
 
 class _Stream:

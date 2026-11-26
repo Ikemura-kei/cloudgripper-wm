@@ -69,6 +69,8 @@ LOWER_MM = 1.5
 JAM_MM = 2.0      # an object this close to the frame, after the push, counts as stopped by it (5 blocked too early; same tuning)
 ROPE_LOCAL_MM = 25.0  # only this much rope around the fingers is treated as pushed: the rest just bends
 STACK_GROW_MM = 10.0  # an object with a cube stacked on it grows by this much all round (one cube: see _obstacles)
+NOTCH_STACK_TOP_MM = 24.5  # a cube in the slot's notch: on its 11 mm floor, tilted at most until it wedges between
+                           # the 13.5 mm walls (10 (cos t + sin t) <= 13.5), so its top is at most 11 + 13.5 mm
 SAMPLES = 8       # poses rasterised along one move
 
 _PX = 280  # grid cells per robot unit (0.5 mm)
@@ -171,8 +173,10 @@ def _obstacles(states, held=()) -> tuple[dict, dict]:
             # "stacked on X" only means off the glass and touching X in the top view: the cube may also lean
             # beside X (on the rope, say). So X gets the cube's height and grows by a cube all round; not for a cube
             # the top view puts inside the slot's outline (in its notch it cannot lean beside the slot).
-            tops[s.on] += s.height_mm
-            if not getattr(s, "in_notch", False):
+            if getattr(s, "in_notch", False):
+                tops[s.on] = max(tops[s.on], NOTCH_STACK_TOP_MM)
+            else:
+                tops[s.on] += s.height_mm
                 masks[s.on] = _grow(masks[s.on], STACK_GROW_MM)
         elif s.status in ("stacked", "off_glass") and getattr(s, "inferred_xy", None) is not None:
             # off the glass and on nothing we see from below (on the frame, most likely): an obstacle of its own

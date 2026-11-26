@@ -350,7 +350,7 @@ class Primitives:
             d = notch if np.dot(np.subtract(CENTRE, c), notch) >= 0 else -notch  # out of the end facing the glass centre
             rot = ((np.arctan2(d[1], d[0]) + np.pi / 2) % np.pi) / np.pi
             half = cf.FINGER_MM[1] / 2  # the tips reach this far along the push
-            start, end = c - d * (7.5 + half + 3) * mm, c + d * (7.5 + 2 + 5 - half) * mm  # cube 2 mm past the slot's side
+            start, end = c - d * (7.5 + half + 3) * mm, c + d * (7.5 + 2 - half) * mm  # the cube's back face 2 mm past the slot's side
             return self._run(f"{cube} out of slot (push)", [("up", dict(z=1.0)), ("close", dict(grip=self.closed)), ("turn", dict(rot=rot)),
                                                             ("behind it", self._cmd(start, rot)), ("down", dict(z=z_for_tip(SLOT_TOP_MM + SLOT_PUSH_ABOVE_MM))),
                                                             ("push", self._cmd(end, rot)), ("up", dict(z=1.0))])

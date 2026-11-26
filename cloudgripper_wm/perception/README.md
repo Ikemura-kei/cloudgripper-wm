@@ -53,6 +53,9 @@ on a second layout (2026-11-25) the white cube lay against the gantry rail, its 
 rail mount of about the right area was taken for it. With the check the mount is rejected, the shape fallback finds
 the cube, and a cube mask that later runs onto a robot part counts as not seen from below.
 
+The top-view name check for a cube (`_top_cube_name`) takes the blue cube down to value 80: tilted in the slot it is
+in shade (median value 110 on 2026-11-26, the old limit) and was reported unaccounted.
+
 Known limits: the HSV numbers come from two layouts and one lighting; from below the white cube has the gantry
 rail's grey and the blue cube the frame's and the cable chain's blue, so a cube touching those in the picture is not
 found by colour (the shape fallback has to find it); the rope keeps only its largest piece (no merging across an occlusion yet).
@@ -80,7 +83,10 @@ Cell 23 still runs the shape steps only.
 
 A cube that is `stacked` or `off_glass` also gets `inferred_px`: where it would be in the base view, from its
 offset to the object under it in the top view, kept inside that object's outline. `draw_states` shows it as a dashed
-square. A cube in the slot is put at the slot's centre with the slot's angle (it can only sit in the notch). A cube on
+square. A cube in the slot is put at the slot's centre with the slot's angle (it can only sit in the notch). It is
+marked `in_notch` when its top-view mask lies inside the slot's convex outline (80 %); one only touching the slot from
+the side is not. The collision filter then takes the slot as 24.5 mm tall (notch floor 11 mm, a cube wedged at most
+13.5 mm high) instead of a cube taller and wider all round. A cube on
 the pan is good to about half a cube and its angle is not estimated; it is not a measurement.
 
 ## Assumptions
