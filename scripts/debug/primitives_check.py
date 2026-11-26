@@ -14,6 +14,7 @@ then home):
   push:pan:1,0:30                push the pan 30 mm along robot (x, y) = (1, 0)
   pick_place:cube_white:0.4,0.5  grasp the white cube and put it down at x 0.4, y 0.5
   cube_into_slot:cube_blue       grasp the blue cube and drop it into the slot's notch
+  cube_out_of_slot:cube_blue:push   get it out again: push (tips above the prongs), drop, swing or grasp
   rope_drag:0:0.1,0              grasp the rope near end 0 (or 1) and drag it by (0.1, 0)
 
 Every move is sent as delta actions within PLAY_MAX_DELTA (x, y 0.1, height 0.25, rotation 0.25, gripper 0.75 per
@@ -56,7 +57,7 @@ def parse(spec):
 
 assert parse("push:pan:1,0:30") == ("push", ["pan", (1.0, 0.0), 30.0]) and parse("rope_drag:0:0.1,0") == ("rope_drag", [0, (0.1, 0.0)])
 todo = [parse(s) for s in a.primitives]
-unknown = [n for n, _ in todo if n not in ("reset_objects", "push", "pick_place", "cube_into_slot", "rope_drag")]
+unknown = [n for n, _ in todo if n not in ("reset_objects", "push", "pick_place", "cube_into_slot", "cube_out_of_slot", "rope_drag")]
 if unknown:
     sys.exit(f"unknown primitive(s): {unknown}")
 

@@ -54,6 +54,7 @@ COLOUR = {  # name: {view: [(hsv low, hsv high), ...]}
     "cube_blue": dict(base=[((104, 90, 35), (118, 255, 90))], top=[((104, 200, 90), (114, 255, 150))]),
     "cube_white": dict(base=[((95, 20, 70), (115, 55, 130))], top=[((50, 0, 170), (80, 30, 255))]),
 }
+IN_NOTCH_FRAC = 0.8  # share of a cube's top-view mask inside the slot's outline for it to count as in the notch
 AREA_PX = {"cube": (1050, 3200), "slot": (4300, 10500), "pan": (4300, 5900)}  # kind: (base view, top view)
 AREA_TOL = (0.35, 2.5)  # a colour region or a mask outside these multiples of AREA_PX is not that object
 SIZE_TOL, SOLIDITY_TOL = 0.15, 0.05  # how far a mask may be from its template
@@ -93,6 +94,7 @@ class ObjectState:
     inferred_px: tuple[float, float] | None = None  # stacked / off_glass: centre in the base view, inferred from the top view
     inferred_xy: tuple[float, float] | None = None  # the same in robot x, y (rough: an obstacle for the filter, not a measurement)
     inferred_angle_deg: float | None = None  # its in-plane angle in the base view, where known (a cube in the slot)
+    in_notch: bool = False  # stacked on the slot and, in the top view, inside the slot's outline: in its notch
     mask_base: np.ndarray | None = None  # bool (480, 640), None if never prompted in this view
     mask_top: np.ndarray | None = None  # bool (720, 1280)
 
@@ -530,6 +532,11 @@ class SceneTracker:
                     # a cube in the slot can only sit in its notch: the slot's centre, edges aligned with the slot's
                     (cx, cy), _, ang = cv2.minAreaRect(np.argwhere(mo)[:, ::-1].astype(np.float32))
                     s.inferred_px, s.inferred_angle_deg = (cx, cy), ang % 90
+                    # in the notch, or only touching the slot from the side? In the top view a cube in the notch lies
+                    # inside the slot's convex outline; one leaning against the slot mostly outside it
+                    hull = cv2.fillConvexPoly(np.zeros(top_seen["slot"].shape, np.uint8), cv2.convexHull(np.argwhere(top_seen["slot"])[:, ::-1]), 1)
+                    inside = (top_seen[name] & cv2.dilate(hull, np.ones((7, 7), np.uint8)).astype(bool)).sum()
+                    s.in_notch = bool(inside >= IN_NOTCH_FRAC * top_seen[name].sum())
                 elif mo is not None and mo.any():
                     p = b[0] - b[1] + np.argwhere(mo)[:, ::-1].mean(0)
                     # a cube on or in an object lies within its outline: pull the centre in where it does not

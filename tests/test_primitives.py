@@ -178,3 +178,15 @@ def test_slot_is_carried_across_its_width(prim):
     u = prim.env.unwrapped
     assert abs(u._target_pos[3] - 0.5) < 1e-6 and prim.env.held == []  # tips were separated along y, its width
 
+
+@pytest.mark.parametrize("way", ["push", "drop", "swing", "grasp"])
+def test_cube_out_of_slot(prim, way):
+    slot = _obj(0.4, 0.5, 15, 16, 25.5)  # long along y: the notch runs along x
+    cube = SimpleNamespace(status="stacked", on="slot", height_mm=10, footprint_xy=None, inferred_xy=(0.4, 0.5), in_notch=True)
+    prim.scene.update(slot=slot, cube_blue=cube)
+    assert prim.cube_out_of_slot("cube_blue", way) and prim.env.held == [], prim.log[-3:]
+    assert not any(b for _, b in prim.log), [l for l, b in prim.log if b]  # nothing blocked
+    # beside the slot rather than in its notch: the slot grows by a cube, nothing is tried
+    cube.in_notch = False; n = len(prim.log)
+    assert not prim.cube_out_of_slot("cube_blue", way) and len(prim.log) == n
+

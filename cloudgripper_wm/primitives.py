@@ -40,6 +40,9 @@ EDGE_SHIFT_MM = 2.0        # grasping a cube that lies against the frame: the ti
 PAN_HANDLE_MM = (15.5, 13.0, 11.0)  # centre of the pan's round part to where the handle is held, tried in this order; Pan.stl: handle from 10 to 21 mm out
 ROOM_MM, ROOM_PUSH_MM = 8.0, 25.0  # clutter: push length, and the room around the object it must leave (a tip is 5 mm)
 ROPE_STEP_MM = 8.0  # rope drag: grasp points tried every this far along the rope, from the end inwards
+SLOT_TOP_MM, SLOT_FLOOR_MM = 16.0, 11.0  # Slot.stl: prongs' top, notch floor
+SLOT_PUSH_ABOVE_MM = 2.5   # cube out of slot by pushing: tips this far above the prongs (the cube's top 5 mm sticks out)
+SWING_GRIP_MM, SWINGS = 9.75, 2  # cube out of slot by swinging: grip on one prong (its centre from the slot's), turns
 FREE_MM = 22.0             # reset: a cube is put down at least this far from every other object's outline
 
 
@@ -250,7 +253,7 @@ class Primitives:
                 done["rope"] = self.rope_drag(i, to * (1 - CENTRE_RADIUS / np.linalg.norm(to)))
         return done
 
-    def grasp(self, name: str, make_room: bool = True) -> bool:
+    def grasp(self, name: str, make_room: bool = True, along_mm: float = 0.0) -> bool:
         """Open, go down around `name`, close, lift. A cube is taken with the tips along one of its sides, the pan
         by its handle (8 mm wide; its round part is 20 mm and the open tips leave 22.5 mm, too little to go down around)."""
         s = self._on_glass(name)
@@ -262,7 +265,8 @@ class Primitives:
             # tips either side of the handle; nearer the round part when the handle's end is at the frame
             spots = [(disc + u * k * cf.MM, np.arctan2(u[1], u[0]) + np.pi / 2) for k in PAN_HANDLE_MM]
         elif name == "slot":  # across its 15 mm width, low on the solid base (Slot.stl: the notch floor is 11 mm up)
-            spots = [(c, _rect_angle(s.footprint_xy)[0] + np.pi / 2)]
+            a = _rect_angle(s.footprint_xy)[0]  # along_mm: off the centre along its length (one end, for a swing)
+            spots = [(c + along_mm * cf.MM * np.array([np.cos(a), np.sin(a)]), a + np.pi / 2)]
         else:
             # Near the frame the tips go along it: the open tips reach 16 mm either way and would be over the frame
             # otherwise. Right against it they also go EDGE_SHIFT_MM towards the glass (the wide side of a tip would
@@ -327,6 +331,51 @@ class Primitives:
         return self._run(f"{cube} into slot", [("turn", dict(rot=rot)), ("over the slot", self._cmd(slot.xy, rot)),
                                                ("down", dict(z=z_for_tip(slot.height_mm + SLOT_DROP_MM)))]) \
             and self._let_go(f"{cube} into slot") and self.goto(f"{cube} into slot: up", z=1.0)
+
+    def cube_out_of_slot(self, cube: str, way: str = "push") -> bool:
+        """Get a cube out of the slot's notch (Slot.stl: 13.5 mm wide, open at both ends along the slot's width,
+        floor 11 mm up, prongs 16 mm). Four ways, to be compared on the robot (Kei, 2026-11-26):
+          push   closed tips just above the prongs push the cube's top out along the notch (nothing precise)
+          drop   grasp the slot, carry it to a free spot, let it fall from the top: the cube bounces out
+          swing  grasp the slot at one end, turn the gripper to and fro at the top height: the cube slides out
+          grasp  open tips beside the notch's open ends, closed into the notch on the cube (+-1.5 mm across it)"""
+        slot, cs = self._on_glass("slot"), self.env.states.get(cube)
+        if slot is None or cs is None or not (cs.status == "stacked" and cs.on == "slot" and getattr(cs, "in_notch", False)):
+            print(f"{cube} out of slot: it is not seen in the slot's notch: nothing done", flush=True)
+            return False
+        c, a = np.array(slot.xy, float), _rect_angle(slot.footprint_xy)[0]
+        along, notch = np.array([np.cos(a), np.sin(a)]), np.array([-np.sin(a), np.cos(a)])
+        mm = cf.MM
+        if way == "push":
+            d = notch if np.dot(np.subtract(CENTRE, c), notch) >= 0 else -notch  # out of the end facing the glass centre
+            rot = ((np.arctan2(d[1], d[0]) + np.pi / 2) % np.pi) / np.pi
+            half = cf.FINGER_MM[1] / 2  # the tips reach this far along the push
+            start, end = c - d * (7.5 + half + 3) * mm, c + d * (7.5 + 2 + 5 - half) * mm  # cube 2 mm past the slot's side
+            return self._run(f"{cube} out of slot (push)", [("up", dict(z=1.0)), ("close", dict(grip=self.closed)), ("turn", dict(rot=rot)),
+                                                            ("behind it", self._cmd(start, rot)), ("down", dict(z=z_for_tip(SLOT_TOP_MM + SLOT_PUSH_ABOVE_MM))),
+                                                            ("push", self._cmd(end, rot)), ("up", dict(z=1.0))])
+        if way == "drop":
+            return self.grasp("slot") and self.place(self._free_spot("slot"), tip_mm=cf.tip_mm(1.0))
+        if way == "swing":
+            spot = self._free_spot("slot")
+            if not (self.grasp("slot", along_mm=SWING_GRIP_MM) and self.goto(f"{cube} out of slot (swing): carry", **self._cmd(spot, float(self.u._target_pos[3])))):
+                return False
+            r0 = float(self.u._target_pos[3])
+            for k in range(SWINGS):  # 90 deg each way, in steps of the play step limit
+                r1 = r0 + 0.5 if r0 + 0.5 <= 1.0 else r0 - 0.5
+                if not (self.goto(f"{cube} out of slot (swing) {k + 1}", rot=r1) and self.goto(f"{cube} out of slot (swing) {k + 1} back", rot=r0)):
+                    self._give_up(f"{cube} out of slot (swing)")
+                    return False
+            return self.place(spot)  # back at the carry's rotation: the tips are over the spot again
+        if way == "grasp":
+            rot = ((np.arctan2(notch[1], notch[0])) % np.pi) / np.pi  # tips at the notch's two open ends
+            ok = self._run(f"{cube} out of slot (grasp)", [("up", dict(z=1.0)), ("open", dict(grip=self.open)), ("turn", dict(rot=rot)),
+                                                           ("over it", self._cmd(c, rot)), ("down", dict(z=z_for_tip(SLOT_FLOOR_MM + 2.5))),
+                                                           ("close", dict(grip=self.closed)), ("lift", dict(z=1.0))])
+            # ponytail: the filter takes the slot, not the cube, as clamped (the cube has no outline of its own up
+            # there); harmless here, the slot is only "held" until the cube is let go
+            return ok and self.place(self._free_spot(cube))
+        raise ValueError(f"way must be push, drop, swing or grasp, not {way!r}")
 
     def _rope_ends(self, inset_mm: float = 12.0):
         """[(point on the rope inset_mm in from the end, rope direction there (rad))] for the rope's two ends, from its

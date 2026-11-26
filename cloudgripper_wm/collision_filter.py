@@ -165,13 +165,15 @@ def _obstacles(states, held=()) -> tuple[dict, dict]:
     tops = {n: s.height_mm for n, s in states.items() if n not in held and s.status == "on_glass" and s.footprint_xy is not None}
     masks = {n: _raster([states[n].footprint_xy]) for n in tops}
     for n, s in states.items():
-        if n in held:
+        if n in held or (s.status == "stacked" and s.on in held):  # in the grasp, or on what is: moves with it
             continue
         if s.status == "stacked" and s.on in tops:
             # "stacked on X" only means off the glass and touching X in the top view: the cube may also lean
-            # beside X (on the rope, say). So X gets the cube's height and grows by a cube all round.
+            # beside X (on the rope, say). So X gets the cube's height and grows by a cube all round; not for a cube
+            # the top view puts inside the slot's outline (in its notch it cannot lean beside the slot).
             tops[s.on] += s.height_mm
-            masks[s.on] = _grow(masks[s.on], STACK_GROW_MM)
+            if not getattr(s, "in_notch", False):
+                masks[s.on] = _grow(masks[s.on], STACK_GROW_MM)
         elif s.status in ("stacked", "off_glass") and getattr(s, "inferred_xy", None) is not None:
             # off the glass and on nothing we see from below (on the frame, most likely): an obstacle of its own
             # where the top view puts it. ponytail: that position is rough, hence the generous square, and the
