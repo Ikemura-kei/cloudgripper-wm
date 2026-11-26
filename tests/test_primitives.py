@@ -145,3 +145,26 @@ def test_pan_is_carried_by_its_handle(prim):
     prim.scene.clear(); prim.scene.update(pan=_pan(x0 + 14 * cf.MM, 0.5))
     assert prim.reset_objects() == {"pan": True} and any("grasp pan: close" in l for l, _ in prim.log)
 
+
+def _rope(p0, ang, length_mm=100, w_mm=8):
+    """A straight rope from p0 along ang: its outline as the tracker gives it (few points on the straight sides)."""
+    d, n = np.array([np.cos(ang), np.sin(ang)]), np.array([-np.sin(ang), np.cos(ang)])
+    p0, h = np.asarray(p0, float), w_mm / 2 * cf.MM
+    p1 = p0 + d * length_mm * cf.MM
+    fp = np.array([p0 - n * h, p1 - n * h, p1 + d * h, p1 + n * h, p0 + n * h, p0 - d * h])
+    return SimpleNamespace(status="on_glass", on=None, xy=tuple((p0 + p1) / 2), height_mm=8, inferred_xy=None, footprint_xy=fp)
+
+
+def test_rope_drag_near_the_frame(prim):
+    y0 = cf.GLASS[1]
+    # the end 4 mm from the low-y frame, the rope going off at 45 deg: near the end a tip would come down on the
+    # frame (robot20, 2026-11-26), farther in the tips fit
+    prim.scene.update(rope=_rope((0.3, y0 + 8 * cf.MM), np.pi / 4))
+    end = int(np.argmin([q[1] for q, _ in prim._rope_ends()]))
+    assert prim.rope_drag(end, (0.0, 0.05)) and prim.env.held == []
+    over = [l for l, _ in prim.log if "over the rope" in l][0]
+    assert "12 mm" not in over, over
+    # along the frame all the way: no spot fits, nothing moves
+    prim.scene.update(rope=_rope((0.3, y0 + 9 * cf.MM), 0.0)); n = len(prim.log)
+    assert not prim.rope_drag(0, (0.0, 0.05)) and len(prim.log) == n
+

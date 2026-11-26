@@ -735,6 +735,8 @@ picks the next one. Written for cell 20; heights, approach distance and waiting 
   centre). The pan's round part is 20 mm and the open tips leave 22.5 mm: the filter refuses to lower around it.
   When no spot has room for the tips, `_make_room` first pushes the object or a rigid neighbour 25 mm (every candidate
   push is asked of the filter before anything moves), then the grasp is tried once more.
+- `rope_drag` grasps the rope across it at the first spot, from 12 mm in from the end and then every 8 mm along the
+  whole rope, where the filter lets the open tips go down: a rope lying along the frame is taken where it leaves it.
 - Not written yet: taking a cube or the rope out of the slot, the rope into the slot.
 - `tests/test_primitives.py` runs the sequences on the mock robot. `scripts/debug/primitives_check.py --out DIR
   reset push:pan:1,0:30 ...` is the supervised live run (window + video; `--mock` for a dry run).

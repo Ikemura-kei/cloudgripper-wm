@@ -38,6 +38,7 @@ SLOT_DROP_MM = 2.2         # a cube is let go with the tips this far above the s
 EDGE_SHIFT_MM = 2.0        # grasping a cube that lies against the frame: the tips go this far towards the glass
 PAN_HANDLE_MM = (15.5, 13.0, 11.0)  # centre of the pan's round part to where the handle is held, tried in this order; Pan.stl: handle from 10 to 21 mm out
 ROOM_MM, ROOM_PUSH_MM = 8.0, 25.0  # clutter: push length, and the room around the object it must leave (a tip is 5 mm)
+ROPE_STEP_MM = 8.0  # rope drag: grasp points tried every this far along the rope, from the end inwards
 FREE_MM = 22.0             # reset: a cube is put down at least this far from every other object's outline
 
 
@@ -317,27 +318,46 @@ class Primitives:
             and self._let_go(f"{cube} into slot") and self.goto(f"{cube} into slot: up", z=1.0)
 
     def _rope_ends(self, inset_mm: float = 12.0):
-        """[(grasp point, rope direction there (rad))] for the rope's two ends, from its outline in robot x, y.
+        """[(point on the rope inset_mm in from the end, rope direction there (rad))] for the rope's two ends, from its
+        outline in robot x, y (resampled every 1 mm: approxPolyDP leaves long straight runs without points).
 
-        ponytail: ends = the two outline points farthest apart, which is wrong for a rope bent into a U or a loop."""
-        fp = np.asarray(self.env.states["rope"].footprint_xy)
+        ponytail: ends = the two outline points farthest apart, distances straight-line: wrong for a rope bent into
+        a U or a loop."""
+        fp0 = np.asarray(self.env.states["rope"].footprint_xy, float)
+        loop = np.vstack([fp0, fp0[:1]])
+        arc = np.r_[0, np.cumsum(np.linalg.norm(np.diff(loop, axis=0), axis=1))]
+        t = np.arange(0, arc[-1], cf.MM)
+        fp = np.c_[np.interp(t, arc, loop[:, 0]), np.interp(t, arc, loop[:, 1])]
         dist = np.linalg.norm(fp[:, None] - fp[None], axis=2)
         out = []
         for e in np.unravel_index(dist.argmax(), dist.shape):
-            near = fp[(dist[e] > inset_mm / 2 * cf.MM) & (dist[e] < 2 * inset_mm * cf.MM)]  # outline on both sides, a little inwards
+            band = lambda lo, hi: fp[(dist[e] > lo * cf.MM) & (dist[e] < hi * cf.MM)]  # outline on both sides
+            near, back, fwd = band(inset_mm - 4, inset_mm + 4), band(max(inset_mm - 12, 0), inset_mm), band(inset_mm, inset_mm + 12)
             p = near.mean(0) if len(near) else fp[e]
-            v = fp[e] - p
+            v = back.mean(0) - fwd.mean(0) if len(back) and len(fwd) else fp[e] - p  # towards the end
             out.append((p, float(np.arctan2(v[1], v[0])) if np.linalg.norm(v) > 1e-6 else 0.0))
         return out
 
     def rope_drag(self, end: int, delta_xy) -> bool:
-        """Grasp the rope near end 0 or 1 (tips across the rope), drag it by delta_xy at the glass, let go."""
+        """Grasp the rope near end 0 or 1 (tips across the rope), drag it by delta_xy at the glass, let go. The grasp
+        point is the first one, from 12 mm in and then every ROPE_STEP_MM along the whole rope, where the filter lets
+        the open tips go down (a rope lying along the frame is taken where it leaves it); none: nothing is done."""
         if self._on_glass("rope") is None:
             return False
-        p, along = self._rope_ends()[end]
-        rot = ((along + np.pi / 2) % np.pi) / np.pi
+        fp = np.asarray(self.env.states["rope"].footprint_xy)
+        length_mm = np.linalg.norm(fp[:, None] - fp[None], axis=2).max() / cf.MM
+        for k in np.arange(12.0, length_mm - 11, ROPE_STEP_MM):
+            p, along = self._rope_ends(k)[end]
+            rot = ((along + np.pi / 2) % np.pi) / np.pi
+            over = [*self._cmd(p, rot).values(), 1.0, rot, self.open]
+            verdict = cf.check(over, [*over[:2], 0.0, rot, self.open], self.env.states)
+            if verdict.allowed:
+                break
+        else:
+            print(f"rope drag: no room for the tips anywhere along the rope, not tried", flush=True)
+            return False
         ok = self._run("rope drag", [("up", dict(z=1.0)), ("open", dict(grip=self.open)), ("turn", dict(rot=rot)),
-                                     ("over the end", self._cmd(p, rot)), ("down", dict(z=0.0)), ("close", dict(grip=self.closed))])
+                                     (f"over the rope {k:.0f} mm from the end", self._cmd(p, rot)), ("down", dict(z=0.0)), ("close", dict(grip=self.closed))])
         if ok and "rope" not in self.env.held:
             self.goto("rope drag: nothing between the tips, raising", z=1.0)
             return False
