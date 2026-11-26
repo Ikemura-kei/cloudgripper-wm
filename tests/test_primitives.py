@@ -95,7 +95,12 @@ def test_grasp_place_slot_reset_rope(prim):
     # ... and with no room either way the grasp is not tried at all
     prim.scene.update(cube_white=_obj(0.3, 0.3 + 14 * cf.MM, 8, 10))
     n = len(prim.log)
-    assert not prim.grasp("cube_blue") and len(prim.log) == n
+    assert not prim.grasp("cube_blue", make_room=False) and len(prim.log) == n
+    # by default room is made first: one push the filter allows, then the grasp is tried once more (the mock
+    # scene does not move, so that second try finds no room either)
+    assert not prim.grasp("cube_blue")
+    pushes = [l for l, b in prim.log[n:] if l.endswith(": push") and not b]
+    assert pushes and len(set(pushes)) == 1 and not any("grasp" in l for l, _ in prim.log[n:])
     del prim.scene["pan"], prim.scene["cube_white"]
     assert prim.cube_into_slot("cube_blue") and prim.env.held == []
     let_go = [l for l, _ in prim.log].index("cube_blue into slot: let go")
@@ -107,3 +112,36 @@ def test_grasp_place_slot_reset_rope(prim):
     rope = _obj(0.5, 0.2, 60, 8, 8); rope.footprint_xy = np.array([[x, 0.2 + s * 4 * cf.MM] for s in (-1, 1) for x in np.linspace(0.3, 0.7, 30)[::s]])
     prim.scene.clear(); prim.scene.update(rope=rope)
     assert prim.rope_drag(0, (0.0, 0.1)) and prim.env.held == []
+
+
+def _pan(x, y, ang=0.0):
+    """Pan.stl's outline: a 20 mm disc with an 8 mm wide handle reaching 21 mm out along `ang`; xy = centre of area."""
+    t = np.linspace(0.45, 2 * np.pi - 0.45, 30)
+    p = np.vstack([10 * np.c_[np.cos(t), np.sin(t)], [[21, -4], [21, 4]]])
+    area = SimpleNamespace(c=np.array([3.4, 0.0]))  # centre of area, 3.4 mm towards the handle
+    R = np.array([[np.cos(ang), -np.sin(ang)], [np.sin(ang), np.cos(ang)]])
+    return SimpleNamespace(status="on_glass", on=None, xy=(x, y), height_mm=7, inferred_xy=None,
+                           footprint_xy=np.array([x, y]) + (p - area.c) @ R.T * cf.MM)
+
+
+def test_pan_is_carried_by_its_handle(prim):
+    x0 = cf.GLASS[0]
+    # round part against the low-x frame, handle towards the glass: no push can get behind it, the handle is grasped
+    prim.scene.update(pan=_pan(x0 + 14 * cf.MM, 0.5))
+    assert not prim.push("pan", (1, 0), 30)
+    assert prim.grasp("pan") and prim.env.held == ["pan"]
+    u = prim.env.unwrapped
+    assert abs(u._target_pos[3] - 0.5) < 1e-6  # tips either side of a handle that points along x
+    tips_x = u._target_pos[0] + cf.TOOL_OFFSET[0] + (np.array([[0, -1], [1, 0]]) @ cf.TOOL_OFFSET_TURNING)[0]
+    assert abs(tips_x - (x0 + (14 - 3.4 + 15.5) * cf.MM)) < 1.5e-3  # 15.5 mm out from the round part's centre
+    assert prim.place((0.45, 0.5)) and prim.env.held == []
+    # handle towards the high-x frame and ending at it: held nearer the round part, where the tips clear the frame
+    x1 = cf.GLASS[2]
+    prim.scene.update(pan=_pan(x1 - (21 - 3.4) * cf.MM, 0.5))
+    assert prim.grasp("pan") and prim.env.held == ["pan"]
+    tips_x = u._target_pos[0] + cf.TOOL_OFFSET[0] + (np.array([[0, -1], [1, 0]]) @ cf.TOOL_OFFSET_TURNING)[0]
+    assert tips_x < x1 - 7 * cf.MM and prim.place((0.45, 0.5))
+    # the reset takes that way for a pan far from the centre
+    prim.scene.clear(); prim.scene.update(pan=_pan(x0 + 14 * cf.MM, 0.5))
+    assert prim.reset_objects() == {"pan": True} and any("grasp pan: close" in l for l, _ in prim.log)
+

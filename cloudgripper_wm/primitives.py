@@ -36,6 +36,8 @@ OVER_FRAME_TIP_MM = 8.6    # ... and when the push starts over the frame (6.25 m
 APPROACH_MM = 10.0         # a push starts this far behind the object
 SLOT_DROP_MM = 2.2         # a cube is let go with the tips this far above the slot's top
 EDGE_SHIFT_MM = 2.0        # grasping a cube that lies against the frame: the tips go this far towards the glass
+PAN_HANDLE_MM = (15.5, 13.0, 11.0)  # centre of the pan's round part to where the handle is held, tried in this order; Pan.stl: handle from 10 to 21 mm out
+ROOM_MM, ROOM_PUSH_MM = 8.0, 25.0  # clutter: push length, and the room around the object it must leave (a tip is 5 mm)
 FREE_MM = 22.0             # reset: a cube is put down at least this far from every other object's outline
 
 
@@ -49,6 +51,20 @@ def _rect_angle(footprint_xy) -> tuple[float, float]:
     """Direction (rad) of the fitted rectangle's long side in robot x, y, and its long / short ratio."""
     (_, _), (w, h), a = cv2.minAreaRect(np.float32(footprint_xy) * 1000)
     return (np.deg2rad(a) if w >= h else np.deg2rad(a + 90)) % np.pi, max(w, h) / max(min(w, h), 1e-6)
+
+
+def _pan_handle(footprint_xy) -> tuple[np.ndarray, np.ndarray]:
+    """Centre of the pan's round part and the handle's direction (unit vector), robot x, y. The round part's centre
+    is the outline's most inward point; the outline's centre of area lies from there towards the handle."""
+    fp = np.asarray(footprint_xy, float) / cf.MM * 4  # quarter millimetres
+    lo = fp.min(0) - 8
+    m = np.zeros(tuple(np.ceil(fp.max(0) - lo + 8).astype(int)[::-1]), np.uint8)
+    cv2.fillPoly(m, [np.round(fp - lo).astype(np.int32)], 1)
+    disc = np.array(cv2.minMaxLoc(cv2.GaussianBlur(cv2.distanceTransform(m, cv2.DIST_L2, 5), (0, 0), 2))[3], float)
+    mo = cv2.moments(m, binaryImage=True)
+    u = np.array([mo["m10"] / mo["m00"], mo["m01"] / mo["m00"]]) - disc
+    u /= np.linalg.norm(u)
+    return (disc + lo) / 4 * cf.MM, u
 
 
 class Primitives:
@@ -118,11 +134,11 @@ class Primitives:
         return None
 
     # ------------------------------------------------------------------ primitives
-    def push(self, name: str, direction, dist_mm: float) -> bool:
-        """Push `name` by dist_mm along `direction` (robot x, y) with the closed gripper held across the direction."""
-        s = self._on_glass(name)
+    def _push_plan(self, name: str, direction, dist_mm: float, say: bool = True):
+        """(rot, tips start, tips end, tip height mm) for a push of `name`, or None when it cannot be done."""
+        s = self._on_glass(name, say)
         if s is None:
-            return False
+            return None
         d = np.asarray(direction, float) / np.linalg.norm(direction)
         c, fp = np.array(s.xy), np.asarray(s.footprint_xy)
         back = float(((c - fp) @ d).max())  # how far the object reaches behind its centre
@@ -141,12 +157,59 @@ class Primitives:
         tip = PUSH_TIP_MM
         if not inside(start):  # the push starts over the frame
             if s.height_mm < 10:
-                print(f"push {name}: the frame is right behind it and it is too low to catch from over the frame: nothing done", flush=True)
-                return False
+                if say:
+                    print(f"push {name}: the frame is right behind it and it is too low to catch from over the frame: nothing done", flush=True)
+                return None
             tip = OVER_FRAME_TIP_MM
+        return rot, start, end, tip
+
+    def _push_fits(self, plan) -> bool:
+        """Does the filter allow the lowering behind the object and the push itself, as the scene is now?"""
+        rot, start, end, tip = plan
+        over, z = [*self._cmd(start, rot).values(), 1.0, rot, self.closed], z_for_tip(tip)
+        down = [*over[:2], z, rot, self.closed]
+        return cf.check(over, down, self.env.states).allowed and cf.check(down, [*self._cmd(end, rot).values(), z, rot, self.closed], self.env.states).allowed
+
+    def push(self, name: str, direction, dist_mm: float) -> bool:
+        """Push `name` by dist_mm along `direction` (robot x, y) with the closed gripper held across the direction."""
+        plan = self._push_plan(name, direction, dist_mm)
+        if plan is None:
+            return False
+        rot, start, end, tip = plan
         return self._run(f"push {name}", [("up", dict(z=1.0)), ("close", dict(grip=self.closed)), ("turn", dict(rot=rot)),
                                            ("behind it", self._cmd(start, rot)), ("down", dict(z=z_for_tip(tip))),
                                            ("push", self._cmd(end, rot)), ("up", dict(z=1.0))])
+
+    def _make_room(self, name: str) -> bool:
+        """A grasp of `name` found no room for the tips: push it, or a rigid neighbour, ROOM_PUSH_MM so that it ends
+        with ROOM_MM clear all round. Every push in eight directions is asked of the filter first; the one that
+        leaves most room is done. False (nothing moved) when none fits.
+
+        ponytail: the room afterwards is predicted by shifting the pushed outline only; what it pushes along is
+        ignored, and the rope is never the one moved. Two objects that touch usually leave no push that fits."""
+        st = {n: s for n, s in self.env.states.items() if s.status == "on_glass" and s.footprint_xy is not None}
+        mm = lambda fp: np.float32(np.asarray(fp) / cf.MM)
+        gap = lambda a, b: min(-max(cv2.pointPolygonTest(b, tuple(map(float, p)), True) for p in a),
+                               -max(cv2.pointPolygonTest(a, tuple(map(float, p)), True) for p in b))
+        x0, y0, x1, y1 = cf.GLASS
+        near = [n for n in st if n not in (name, "rope") and gap(mm(st[name].footprint_xy), mm(st[n].footprint_xy)) < 20]
+        best = (ROOM_MM, None)
+        for mover in [name, *near]:
+            for t in np.arange(0, 2 * np.pi, np.pi / 4):
+                d = np.array([np.cos(t), np.sin(t)])
+                fps = {n: np.asarray(s.footprint_xy) + (d * ROOM_PUSH_MM * cf.MM if n == mover else 0) for n, s in st.items()}
+                f = fps[mover]
+                if f[:, 0].min() < x0 + 0.07 or f[:, 0].max() > x1 - 0.07 or f[:, 1].min() < y0 + 0.07 or f[:, 1].max() > y1 - 0.07:
+                    continue  # would end within 10 mm of the frame
+                room = min(gap(mm(fps[name]), mm(fps[n])) for n in fps if n != name)
+                if room > best[0]:
+                    plan = self._push_plan(mover, d, ROOM_PUSH_MM, say=False)
+                    if plan is not None and self._push_fits(plan):
+                        best = (room, (mover, d))
+        if best[1] is None:
+            return False
+        print(f"grasp {name}: making room by pushing {best[1][0]}", flush=True)
+        return self.push(best[1][0], best[1][1], ROOM_PUSH_MM)
 
     def _free_spot(self, name: str) -> np.ndarray:
         """A place near CENTRE at least FREE_MM from every other object's outline (the nearest to CENTRE that is)."""
@@ -167,7 +230,7 @@ class Primitives:
         for name in sorted((n for n in self.env.states if n != "rope" and self._on_glass(n, say=False)), key=far, reverse=True):
             if far(name) <= CENTRE_RADIUS:  # read again: an earlier move may have moved it
                 continue
-            if name.startswith("cube"):
+            if name != "slot":  # cubes and the pan (by its handle) are carried; pushed if no grasp fits
                 done[name] = self.pick_place(name, self._free_spot(name)) or self.push(
                     name, np.subtract(CENTRE, self.env.states[name].xy), (far(name) - CENTRE_RADIUS) / cf.MM)  # a corner: push it out
             else:
@@ -180,31 +243,41 @@ class Primitives:
                 done["rope"] = self.rope_drag(i, to * (1 - CENTRE_RADIUS / np.linalg.norm(to)))
         return done
 
-    def grasp(self, name: str) -> bool:
-        """Open, go down around `name` (a cube) with the tips along one of its sides, close, lift."""
+    def grasp(self, name: str, make_room: bool = True) -> bool:
+        """Open, go down around `name`, close, lift. A cube is taken with the tips along one of its sides, the pan
+        by its handle (8 mm wide; its round part is 20 mm and the open tips leave 22.5 mm, too little to go down around)."""
         s = self._on_glass(name)
         if s is None:
             return False
-        th, c = _rect_angle(s.footprint_xy)[0] % (np.pi / 2), np.array(s.xy, float)
-        # Near the frame the tips go along it: the open tips reach 16 mm either way and would be over the frame
-        # otherwise. Right against it they also go EDGE_SHIFT_MM towards the glass (the wide side of a tip would
-        # be over the frame): they still hold 8 of the cube's 10 mm. In a corner neither direction fits.
-        x0, y0, x1, y1 = cf.GLASS
-        reach, near = 19 * cf.MM, 7 * cf.MM
-        at_x, at_y = c[0] < x0 + reach or c[0] > x1 - reach, c[1] < y0 + reach or c[1] > y1 - reach
-        ths = [th, th + np.pi / 2]  # the cube's two side directions
-        if at_x != at_y:  # one frame side: the direction along that side first
-            ths.sort(key=lambda t: abs(np.sin(t)) if at_x else abs(np.cos(t)), reverse=True)
-        c += EDGE_SHIFT_MM * cf.MM * np.array([int(c[0] < x0 + near) - int(c[0] > x1 - near), int(c[1] < y0 + near) - int(c[1] > y1 - near)])
-        # Ask the filter before moving: take the first direction in which the open tips can go down around the cube
-        # (the other may put a tip on the rope or a neighbour). If neither can, give up without moving.
-        for th in ths:
+        c = np.array(s.xy, float)
+        if name == "pan":
+            disc, u = _pan_handle(s.footprint_xy)
+            # tips either side of the handle; nearer the round part when the handle's end is at the frame
+            spots = [(disc + u * k * cf.MM, np.arctan2(u[1], u[0]) + np.pi / 2) for k in PAN_HANDLE_MM]
+        else:
+            # Near the frame the tips go along it: the open tips reach 16 mm either way and would be over the frame
+            # otherwise. Right against it they also go EDGE_SHIFT_MM towards the glass (the wide side of a tip would
+            # be over the frame): they still hold 8 of the cube's 10 mm. In a corner neither direction fits.
+            th = _rect_angle(s.footprint_xy)[0] % (np.pi / 2)
+            x0, y0, x1, y1 = cf.GLASS
+            reach, near = 19 * cf.MM, 7 * cf.MM
+            at_x, at_y = c[0] < x0 + reach or c[0] > x1 - reach, c[1] < y0 + reach or c[1] > y1 - reach
+            ths = [th, th + np.pi / 2]  # the cube's two side directions
+            if at_x != at_y:  # one frame side: the direction along that side first
+                ths.sort(key=lambda t: abs(np.sin(t)) if at_x else abs(np.cos(t)), reverse=True)
+            c += EDGE_SHIFT_MM * cf.MM * np.array([int(c[0] < x0 + near) - int(c[0] > x1 - near), int(c[1] < y0 + near) - int(c[1] > y1 - near)])
+            spots = [(c, t) for t in ths]
+        # Ask the filter before moving: take the first spot and direction in which the open tips can go down around the cube
+        # (another may put a tip on the rope or a neighbour). If none can, give up without moving.
+        for c, th in spots:
             rot = (th % np.pi) / np.pi
             over = [*self._cmd(c, rot).values(), 1.0, rot, self.open]
             verdict = cf.check(over, [*over[:2], 0.0, rot, self.open], self.env.states)
             if verdict.allowed:
                 break
         else:
+            if make_room and self._make_room(name):  # clutter: push it or a neighbour apart once, then try again
+                return self.grasp(name, make_room=False)
             print(f"grasp {name}: no room for the tips ({verdict.reason}), not tried", flush=True)
             return False
         ok = self._run(f"grasp {name}", [("up", dict(z=1.0)), ("open", dict(grip=self.open)), ("turn", dict(rot=rot)),

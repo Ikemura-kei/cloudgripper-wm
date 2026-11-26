@@ -552,6 +552,8 @@ def draw_states(base_bgr: np.ndarray, top_bgr: np.ndarray, states: dict[str, Obj
         for img, m in ((base, s.mask_base), (top, s.mask_top)):
             if m is not None and m.any():
                 cv2.drawContours(img, cv2.findContours(m.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0], -1, COLOURS[n], 2)
+                inner = cv2.erode(m.astype(np.uint8), np.ones((5, 5), np.uint8))  # a black line just inside: the colour alone is hard to see on some backgrounds
+                cv2.drawContours(img, cv2.findContours(inner, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0], -1, (0, 0, 0), 1)
     for n, s in states.items():
         if s.inferred_px is not None:  # hidden from below: a dashed cube-sized square where the top view puts it
             r = (RIGID["cube"][0] + RIGID["cube"][1]) / 4
