@@ -162,6 +162,11 @@ class Primitives:
                     print(f"push {name}: the frame is right behind it and it is too low to catch from over the frame: nothing done", flush=True)
                 return None
             tip = OVER_FRAME_TIP_MM
+        (ax, bx), (ay, by) = self.u._x_range, self.u._y_range
+        if not all(ax <= q["x"] <= bx and ay <= q["y"] <= by for q in (self._cmd(start, rot), self._cmd(end, rot))):
+            if say:
+                print(f"push {name}: the arm cannot reach behind it (outside its range): nothing done", flush=True)
+            return None
         return rot, start, end, tip
 
     def _push_fits(self, plan) -> bool:
@@ -220,22 +225,22 @@ class Primitives:
         return ok[0] if ok else np.array(CENTRE)
 
     def reset_objects(self) -> dict[str, bool]:
-        """Bring every object that is far from CENTRE back towards it, farthest first: a cube is picked up and put
-        down on a free spot (that also works against the frame, where nothing can get behind it), the slot and
-        the pan are pushed (a cube in a corner too), the rope's farther end is dragged. Returns {name: done} for what it tried.
+        """Bring every object that is far from CENTRE back towards it, farthest first: each rigid object is picked up
+        and put down on a free spot (that also works against the frame, where nothing can get behind it), or pushed
+        when no grasp fits (a cube in a corner); the rope is dragged from the first spot along it the tips fit.
+        Returns {name: done} for what it tried.
 
-        ponytail: a slot or pan lying against the low-x or low-y frame, and a pan against any frame, stay there
-        (the push is given up): turn them with a sideways push first, or grasp the slot, when that happens often."""
+        ponytail: a pan whose handle points at the frame and whose round part is near it, and a slot with its long side
+        against the low-x or low-y frame, stay there (no grasp fits, nothing gets behind them): turn them with a
+        sideways push when that happens often."""
         done = {}
         far = lambda n: float(np.linalg.norm(np.subtract(self.env.states[n].xy, CENTRE)))
         for name in sorted((n for n in self.env.states if n != "rope" and self._on_glass(n, say=False)), key=far, reverse=True):
             if far(name) <= CENTRE_RADIUS:  # read again: an earlier move may have moved it
                 continue
-            if name != "slot":  # cubes and the pan (by its handle) are carried; pushed if no grasp fits
-                done[name] = self.pick_place(name, self._free_spot(name)) or self.push(
-                    name, np.subtract(CENTRE, self.env.states[name].xy), (far(name) - CENTRE_RADIUS) / cf.MM)  # a corner: push it out
-            else:
-                done[name] = self.push(name, np.subtract(CENTRE, self.env.states[name].xy), (far(name) - CENTRE_RADIUS) / cf.MM)
+            # carried if a grasp fits (a cube by its sides, the slot across its width, the pan by its handle), else pushed
+            done[name] = self.pick_place(name, self._free_spot(name)) or self.push(
+                name, np.subtract(CENTRE, self.env.states[name].xy), (far(name) - CENTRE_RADIUS) / cf.MM)
         if self._on_glass("rope", say=False):
             ends = self._rope_ends()
             i = int(np.argmax([np.linalg.norm(e - CENTRE) for e, _ in ends]))
@@ -255,6 +260,8 @@ class Primitives:
             disc, u = _pan_handle(s.footprint_xy)
             # tips either side of the handle; nearer the round part when the handle's end is at the frame
             spots = [(disc + u * k * cf.MM, np.arctan2(u[1], u[0]) + np.pi / 2) for k in PAN_HANDLE_MM]
+        elif name == "slot":  # across its 15 mm width, low on the solid base (Slot.stl: the notch floor is 11 mm up)
+            spots = [(c, _rect_angle(s.footprint_xy)[0] + np.pi / 2)]
         else:
             # Near the frame the tips go along it: the open tips reach 16 mm either way and would be over the frame
             # otherwise. Right against it they also go EDGE_SHIFT_MM towards the glass (the wide side of a tip would
@@ -270,14 +277,17 @@ class Primitives:
             spots = [(c, t) for t in ths]
         # Ask the filter before moving: take the first spot and direction in which the open tips can go down around the cube
         # (another may put a tip on the rope or a neighbour). If none can, give up without moving.
+        reasons = []
         for c, th in spots:
             rot = (th % np.pi) / np.pi
             over = [*self._cmd(c, rot).values(), 1.0, rot, self.open]
             verdict = cf.check(over, [*over[:2], 0.0, rot, self.open], self.env.states)
             if verdict.allowed:
                 break
+            reasons.append(verdict.reason)
         else:
-            if make_room and self._make_room(name):  # clutter: push it or a neighbour apart once, then try again
+            # clutter: push it or a neighbour apart once, then try again (no use when only the frame is in the way)
+            if make_room and any("frame" not in r for r in reasons) and self._make_room(name):
                 return self.grasp(name, make_room=False)
             print(f"grasp {name}: no room for the tips ({verdict.reason}), not tried", flush=True)
             return False

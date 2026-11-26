@@ -168,3 +168,13 @@ def test_rope_drag_near_the_frame(prim):
     prim.scene.update(rope=_rope((0.3, y0 + 9 * cf.MM), 0.0)); n = len(prim.log)
     assert not prim.rope_drag(0, (0.0, 0.05)) and len(prim.log) == n
 
+
+def test_slot_is_carried_across_its_width(prim):
+    x0 = cf.GLASS[0]
+    # an end against the low-x frame: nothing reaches behind it, but the tips fit either side of its 15 mm width
+    prim.scene.update(slot=_obj(x0 + 14 * cf.MM, 0.5, 25.5, 16, 15))
+    assert not prim.push("slot", (1, 0), 30)
+    assert prim.reset_objects() == {"slot": True} and any("grasp slot: close" in l for l, _ in prim.log)
+    u = prim.env.unwrapped
+    assert abs(u._target_pos[3] - 0.5) < 1e-6 and prim.env.held == []  # tips were separated along y, its width
+

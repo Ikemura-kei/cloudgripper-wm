@@ -727,11 +727,11 @@ per-axis step limit `constants.PLAY_MAX_DELTA` (x, y 0.1; height 0.25; rotation 
 the world model uses; the collision filter judges every step; a blocked move gives the primitive up (arm to the top height, returns False) and the caller
 picks the next one. Written for cell 20; heights, approach distance and waiting times are first guesses.
 
-- `reset_objects` brings objects far from the glass centre back: cubes are picked up and put on a free spot (near the
-  frame the tips go along it; in a corner the cube is pushed instead), slot and pan are pushed, the rope's farther end
-  is dragged. A slot or pan against the low-x or low-y frame, and a pan against any frame, stay where they are: the
-  arm's range (0.05 to 0.95) ends at the glass edge on the low sides, so nothing gets behind them.
-- `grasp` takes a cube by two sides and the pan by its handle (tried 15.5, 13 and 11 mm out from the round part's
+- `reset_objects` brings objects far from the glass centre back: each rigid object is picked up and put on a free
+  spot, or pushed when no grasp fits; the rope is dragged. A pan with its handle towards a frame and its round part
+  near it, and a slot with its long side against the low-x or low-y frame, stay where they are (no grasp fits and
+  the arm's range, 0.05 to 0.95, ends at the glass edge on the low sides, so nothing gets behind them).
+- `grasp` takes a cube by two sides, the slot across its 15 mm width (low, on the solid base) and the pan by its handle (tried 15.5, 13 and 11 mm out from the round part's
   centre). The pan's round part is 20 mm and the open tips leave 22.5 mm: the filter refuses to lower around it.
   When no spot has room for the tips, `_make_room` first pushes the object or a rigid neighbour 25 mm (every candidate
   push is asked of the filter before anything moves), then the grasp is tried once more.
@@ -741,5 +741,5 @@ picks the next one. Written for cell 20; heights, approach distance and waiting 
 - `tests/test_primitives.py` runs the sequences on the mock robot. `scripts/debug/primitives_check.py --out DIR
   reset push:pan:1,0:30 ...` is the supervised live run (window + video; `--mock` for a dry run).
   `cloudgripper_wm/envs/filter_view.py` is the window/video helper both debug scripts share.
-- Run on robot20: `pick_place` of a cube (2026-11-25), `push` of the pan (2026-11-26). Not yet: the pan grasp,
-  making room, `rope_drag`, `cube_into_slot`, `reset_objects`.
+- Run on robot20: `pick_place` of a cube (2026-11-25); `push` of the pan, making room before a grasp, `rope_drag`
+  (2026-11-26). Not yet: the pan and slot grasps, `cube_into_slot`, `reset_objects`.
