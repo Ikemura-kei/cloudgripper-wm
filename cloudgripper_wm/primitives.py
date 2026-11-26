@@ -51,11 +51,15 @@ SLOT_TOP_MM, SLOT_FLOOR_MM = 16.0, 5.0  # Slot.stl (stored upside down): walls' 
 NOTCH_PUSH_Z = 0.15
 NOTCH_PUSH_PAST_MM = 8.0   # the push ends with the cube's back face this far past the slot's side (2 mm left it on
                            # the edge, prim_20)
-NOTCH_PUSH_TRIES = 3       # pushes while the cube is still seen in the notch afterwards
+NOTCH_PUSH_TRIES = 1       # pushes while the cube is still seen in the notch afterwards. Was 3: prim_21 (2026-11-26)
+                           # then carried the slot and pushed again, unattended, and a finger pressed on the slot's edge
 NOTCH_PUSH_GAP_MM = 4.0    # ... and it comes down this far from the slot's side (2 mm was refused in prim_17: the tracked
                            # outline is about 1 mm larger than the slot, and the filter adds LOWER_MM)
 SLOT_WALL_MM = 9.75        # centre of either 6 mm wall from the slot's centre, along its length (where it is grasped)
 SWINGS = 2                 # cube out of slot by swinging: turns to and fro
+RECLOSE_EASE = 0.05         # grasp: after closing, open this much and close again (a fresh command to the gripper)
+LIFT_RISE_PX = 40           # grasp: a lifted object rises at least this much in the top view (the slot rose ~100 px)
+DROP_PX = 50                # before lowering: a held object this far from where the carry should have put it was dropped
 FREE_MM = 22.0             # reset: a cube is put down at least this far from every other object's outline
 
 
@@ -310,20 +314,58 @@ class Primitives:
                 return self.grasp(name, make_room=False)
             print(f"grasp {name}: no room for the tips ({verdict.reason}), not tried", flush=True)
             return False
+        # close, then ease off and close again (Kei, 2026-11-26): a gripper stopped by a wide object gets a fresh command
         ok = self._run(f"grasp {name}", [("up", dict(z=1.0)), ("open", dict(grip=self.open)), ("turn", dict(rot=rot)),
-                                          ("over it", self._cmd(c, rot)), ("down", dict(z=0.0)), ("close", dict(grip=self.closed))])
+                                          ("over it", self._cmd(c, rot)), ("down", dict(z=0.0)), ("close", dict(grip=self.closed)),
+                                          ("ease", dict(grip=self.closed + RECLOSE_EASE)), ("close again", dict(grip=self.closed))])
         if ok and name not in self.env.held:  # closed on nothing
             self.goto(f"grasp {name}: nothing between the tips, raising", z=1.0)
             return False
+        before = self._top_c(name)
         if ok and not self.goto(f"grasp {name}: lift", z=1.0):
             self._give_up(f"grasp {name}")
             return False
+        # did it come up? In the top view a lifted object rises (about 100 px for the slot, prim_21). prim_21: the slot
+        # slipped out on the lift, "holding slot" stayed, and the arm was later lowered onto it.
+        after = self._top_c(name)
+        if ok and before is not None and after is not None and before[1] - after[1] < LIFT_RISE_PX:
+            print(f"grasp {name}: it did not come up (top view: {before[1] - after[1]:.0f} px), letting go", flush=True)
+            self.goto(f"grasp {name}: not lifted, opening", grip=self.open)  # opening also clears "holding"
+            return False
+        self._lifted = (after, np.array(self.u._target_pos[:2], float)) if ok else None
         return ok
+
+    def _top_c(self, name: str):
+        """Centre of `name`'s top-view mask (x, y px), or None."""
+        m = getattr(self.env.states.get(name), "mask_top", None)
+        return None if m is None or not m.any() else np.argwhere(m)[:, ::-1].mean(0)
+
+    def _still_held(self, label: str) -> bool:
+        """Before lowering what is held: is it still where a held object should be after the carry? A drop shows
+        as the object far below that place in the top view. If it was dropped, "holding" is cleared (the filter
+        then sees it as an obstacle again) and False is returned. Unknown (no top-view mask) counts as held."""
+        tr, held = self.env._tracker, list(self.env.held)
+        if not held or getattr(self, "_lifted", None) is None or not hasattr(tr, "top_px"):
+            return True
+        c0, xy0 = self._lifted
+        c1 = self._top_c(held[0])
+        if c0 is None or c1 is None:
+            return True
+        expect = c0 + tr.top_px(self.u._target_pos[:2]) - tr.top_px(xy0)
+        if abs(c1[1] - expect[1]) <= DROP_PX and abs(c1[0] - expect[0]) <= DROP_PX:
+            return True
+        print(f"{label}: {held[0]} is not where it should be in the gripper (top view, {c1 - expect} px off): dropped", flush=True)
+        self.env.held = []
+        return False
 
     def place(self, xy, tip_mm: float | None = None) -> bool:
         """Carry what is held to tips position `xy`, lower (to the glass, or to tip_mm), let go, raise."""
         rot = float(self.u._target_pos[3])
-        if not self._run("place", [("carry", self._cmd(xy, rot)), ("down", dict(z=0.0 if tip_mm is None else z_for_tip(tip_mm)))]):
+        if not self._run("place", [("carry", self._cmd(xy, rot))]):
+            return False
+        if not self._still_held("place"):
+            return False
+        if not self._run("place", [("down", dict(z=0.0 if tip_mm is None else z_for_tip(tip_mm)))]):
             return False
         if not self._let_go("place"):
             self._give_up("place")
@@ -342,8 +384,9 @@ class Primitives:
         if slot is None or not self.grasp(cube):
             return False
         rot = ((_rect_angle(slot.footprint_xy)[0] + np.pi / 2) % np.pi) / np.pi
-        return self._run(f"{cube} into slot", [("turn", dict(rot=rot)), ("over the slot", self._cmd(slot.xy, rot)),
-                                               ("down", dict(z=z_for_tip(slot.height_mm + SLOT_DROP_MM)))]) \
+        return self._run(f"{cube} into slot", [("turn", dict(rot=rot)), ("over the slot", self._cmd(slot.xy, rot))]) \
+            and self._still_held(f"{cube} into slot") \
+            and self._run(f"{cube} into slot", [("down", dict(z=z_for_tip(slot.height_mm + SLOT_DROP_MM)))]) \
             and self._let_go(f"{cube} into slot") and self.goto(f"{cube} into slot: up", z=1.0)
 
     def _notch_push(self, cube: str):
@@ -371,7 +414,7 @@ class Primitives:
             reason = v.reason if not v.allowed else "outside the arm's range"
         return f"no room for the tips ({reason})"
 
-    def cube_out_of_slot(self, cube: str, way: str = "push", tries: int = NOTCH_PUSH_TRIES) -> bool:
+    def cube_out_of_slot(self, cube: str, way: str = "push", tries: int = NOTCH_PUSH_TRIES, move_slot: bool = False) -> bool:
         """Get a cube out of the slot's notch (Slot.stl: 13.5 mm wide, open at both ends along the slot's width,
         floor 5 mm up, walls 16 mm; a seated cube's top is 1 mm below them). Four ways, to be compared (Kei, 2026-11-26):
           push   one open tip, its 5 mm side across the notch (4.25 mm to spare each side), goes along the notch
@@ -388,6 +431,9 @@ class Primitives:
         mm = cf.MM
         if way == "push":
             plan = self._notch_push(cube)
+            if isinstance(plan, str) and not move_slot:
+                print(f"{cube} out of slot (push): {plan}, not tried (move_slot=True carries the slot out first)", flush=True)
+                return False
             if isinstance(plan, str):  # no room where the slot is (its notch towards the frame): carry it out first
                 print(f"{cube} out of slot (push): {plan}; moving the slot first", flush=True)
                 if not (self.pick_place("slot", self._free_spot("slot")) and self.goto(f"{cube} out of slot: home to look", x=0.5, y=0.5)):
@@ -431,7 +477,7 @@ class Primitives:
         if st.status != "on_glass":
             print(f"{cube} out of slot ({way}): still {st.status}{' on ' + st.on if st.on else ''} afterwards", flush=True)
             if way == "push" and tries > 1 and getattr(st, "in_notch", False):  # moved but not out: push again
-                return self.cube_out_of_slot(cube, way, tries - 1)
+                return self.cube_out_of_slot(cube, way, tries - 1, move_slot)
         return st.status == "on_glass"
 
     def _rope_ends(self, inset_mm: float = 12.0):

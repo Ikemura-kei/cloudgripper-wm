@@ -210,7 +210,34 @@ def test_cube_pushed_out_after_moving_the_slot(prim):
     assert isinstance(prim._notch_push("cube_blue"), str)  # the tip would come down over the frame to enter the notch
     looks = iter([notch(0.4), dict(cube_blue=_obj(0.45, 0.5, 10, 10))])  # after the carry; after the push
     prim.env._tracker.refresh = lambda b, t: (prim.scene.update(next(looks)), prim.scene)[1]
-    assert prim.cube_out_of_slot("cube_blue", "push")
+    n = len(prim.log)
+    assert not prim.cube_out_of_slot("cube_blue", "push") and len(prim.log) == n  # by default the slot is not carried
+    assert prim.cube_out_of_slot("cube_blue", "push", move_slot=True)
     labels = [l for l, _ in prim.log]
     assert labels.index("grasp slot: close") < labels.index("cube_blue out of slot (push): push")
+
+
+def test_grasp_checks_the_lift_and_place_checks_for_a_drop(prim):
+    """prim_21 (2026-11-26): the slot slipped out on the lift, "holding slot" stayed, and the arm was lowered onto it."""
+    u = prim.env.unwrapped
+    cube = _obj(0.5, 0.5, 10, 10)
+    prim.scene.update(cube_blue=cube)
+
+    def mask(y):
+        a = np.zeros((720, 1280), bool)
+        a[y:y + 40, 600:640] = True
+        return a
+    cube.mask_top = mask(400)
+    # the top view never sees it rise: not lifted, the gripper opens and nothing is held
+    assert not prim.grasp("cube_blue") and prim.env.held == [] and prim.log[-1][0] == "grasp cube_blue: not lifted, opening"
+    # it rises with the lift: held
+    prim.env._tracker.step = lambda b, t: (setattr(cube, "mask_top", mask(300 if prim.env.held and u._target_pos[2] > 0.9 else 400)), prim.scene)[1]
+    assert prim.grasp("cube_blue") and prim.env.held == ["cube_blue"]
+    labels = [l for l, _ in prim.log]
+    assert labels.index("grasp cube_blue: ease") < labels.index("grasp cube_blue: close again")
+    # carried 0.1 in x, which should move it 100 px in this made-up top view; it stays where it was: dropped
+    prim.env._tracker.top_px = lambda xy: np.array([0.0, xy[0] * 1000])
+    n = len(prim.log)
+    assert not prim.place((0.6, 0.5)) and prim.env.held == []
+    assert not any(l.startswith("place: down") for l, _ in prim.log[n:])
 

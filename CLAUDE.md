@@ -738,6 +738,12 @@ picks the next one. Written for cell 20; heights, approach distance and waiting 
   centre). The pan's round part is 20 mm and the open tips leave 22.5 mm: the filter refuses to lower around it.
   When no spot has room for the tips, `_make_room` first pushes the object or a rigid neighbour 25 mm (every candidate
   push is asked of the filter before anything moves), then the grasp is tried once more.
+- A grasp closes, eases off by `RECLOSE_EASE` and closes again (a fresh command to a gripper stopped by a wide
+  object), then checks in the top view that the object rose with the lift (`LIFT_RISE_PX`); if not, it opens (which
+  clears "holding") and gives up. Before lowering what is held (`place`, `cube_into_slot`) `_still_held` checks that
+  it moved with the carry in the top view (`DROP_PX`); if it was dropped, "holding" is cleared and nothing is
+  lowered. Why: prim_21 (2026-11-26) the slot slipped out on the lift, "holding slot" stayed, the filter ignored the
+  slot as held, and the gripper was lowered onto its edge.
 - `rope_drag` grasps the rope across it at the first spot, from 12 mm in from the end and then every 8 mm along the
   whole rope, where the filter lets the open tips go down: a rope lying along the frame is taken where it leaves it.
 - `cube_out_of_slot(cube, way)`: push (one open tip, 5 mm across the 13.5 mm notch, goes along it at height command

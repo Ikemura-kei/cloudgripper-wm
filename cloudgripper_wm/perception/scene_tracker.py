@@ -364,6 +364,11 @@ class SceneTracker:
     def _to_top(self, pts) -> np.ndarray:
         return cv2.perspectiveTransform(np.float32(pts)[None], self.H)[0]
 
+    def top_px(self, xy) -> np.ndarray:
+        """Where robot x, y on the glass appears in the top view (rough: the base-to-top fit). Differences of two such
+        points tell how far a carried object should move in the top view."""
+        return self._to_top([self.conv.x_y_to_px_py(*xy)])[0]
+
     def _look(self, base_bgr: np.ndarray, top_bgr: np.ndarray) -> dict[str, ObjectState]:
         missing = {n for n, s in self.states.items() if s.status != "on_glass"}
         rigid_missing = missing - {"rope"}
