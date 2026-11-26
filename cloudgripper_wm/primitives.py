@@ -49,6 +49,9 @@ SLOT_TOP_MM, SLOT_FLOOR_MM = 16.0, 5.0  # Slot.stl (stored upside down): walls' 
 # when lowered from above, as 0.27 suggests, there are 8 mm to spare before it misses.
 # ponytail: one guess between two failures; measure the open tips at 0.1 to 0.3 if 0.15 misses too
 NOTCH_PUSH_Z = 0.15
+NOTCH_PUSH_PAST_MM = 8.0   # the push ends with the cube's back face this far past the slot's side (2 mm left it on
+                           # the edge, prim_20)
+NOTCH_PUSH_TRIES = 3       # pushes while the cube is still seen in the notch afterwards
 NOTCH_PUSH_GAP_MM = 4.0    # ... and it comes down this far from the slot's side (2 mm was refused in prim_17: the tracked
                            # outline is about 1 mm larger than the slot, and the filter adds LOWER_MM)
 SLOT_WALL_MM = 9.75        # centre of either 6 mm wall from the slot's centre, along its length (where it is grasped)
@@ -358,7 +361,7 @@ class Primitives:
         reason = ""
         for side in (1, -1):  # the other tip beside one end of the slot or the other: the first the filter allows
             mid = along * side * cf.sep_mm(self.open) / 2 * mm  # tips' midpoint from the tip in the notch
-            start, end = c - d * (7.5 + half + NOTCH_PUSH_GAP_MM) * mm + mid, c + d * (7.5 + 2 - half) * mm + mid  # cube's back face 2 mm out
+            start, end = c - d * (7.5 + half + NOTCH_PUSH_GAP_MM) * mm + mid, c + d * (7.5 + NOTCH_PUSH_PAST_MM - half) * mm + mid  # cube's back face this far out
             p0 = [*self._cmd(start, rot).values(), 1.0, rot, self.open]
             p1, p2 = [*p0[:2], z, rot, self.open], [*self._cmd(end, rot).values(), z, rot, self.open]
             v = cf.check(p0, p1, self.env.states)
@@ -368,7 +371,7 @@ class Primitives:
             reason = v.reason if not v.allowed else "outside the arm's range"
         return f"no room for the tips ({reason})"
 
-    def cube_out_of_slot(self, cube: str, way: str = "push") -> bool:
+    def cube_out_of_slot(self, cube: str, way: str = "push", tries: int = NOTCH_PUSH_TRIES) -> bool:
         """Get a cube out of the slot's notch (Slot.stl: 13.5 mm wide, open at both ends along the slot's width,
         floor 5 mm up, walls 16 mm; a seated cube's top is 1 mm below them). Four ways, to be compared (Kei, 2026-11-26):
           push   one open tip, its 5 mm side across the notch (4.25 mm to spare each side), goes along the notch
@@ -427,6 +430,8 @@ class Primitives:
         st = self.env.look_again()[cube]
         if st.status != "on_glass":
             print(f"{cube} out of slot ({way}): still {st.status}{' on ' + st.on if st.on else ''} afterwards", flush=True)
+            if way == "push" and tries > 1 and getattr(st, "in_notch", False):  # moved but not out: push again
+                return self.cube_out_of_slot(cube, way, tries - 1)
         return st.status == "on_glass"
 
     def _rope_ends(self, inset_mm: float = 12.0):

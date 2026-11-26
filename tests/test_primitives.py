@@ -9,7 +9,7 @@ from cloudgripper_wm.envs.cloudgripper_env import CloudGripperEnv
 from cloudgripper_wm.envs.constants import PLAY_MAX_DELTA
 from cloudgripper_wm.envs.filtered_wrapper import FilteredCloudGripperWrapper
 from cloudgripper_wm.envs.robot_pool import RobotPool
-from cloudgripper_wm.primitives import Primitives, z_for_tip
+from cloudgripper_wm.primitives import NOTCH_PUSH_TRIES, Primitives, z_for_tip
 
 
 def _obj(x, y, w_mm, h_mm, l_mm=None):
@@ -184,8 +184,13 @@ def test_cube_out_of_slot(prim, way):
     slot = _obj(0.4, 0.5, 15, 16, 25.5)  # long along y: the notch runs along x
     cube = SimpleNamespace(status="stacked", on="slot", height_mm=10, footprint_xy=None, inferred_xy=(0.4, 0.5), in_notch=True)
     prim.scene.update(slot=slot, cube_blue=cube)
-    # the mock scene does not move: as long as the tracker still reports it in the slot, it is not done
+    # the mock scene does not move: as long as the tracker still reports it in the slot, it is not done (a push is
+    # tried NOTCH_PUSH_TRIES times)
+    plans, plan = [], prim._notch_push
+    prim._notch_push = lambda c: (plans.append(c), plan(c))[1]
     assert not prim.cube_out_of_slot("cube_blue", way) and prim.log[-1][0] == "cube_blue out of slot: back home to look"
+    assert len(plans) == (NOTCH_PUSH_TRIES if way == "push" else 0)
+    prim._notch_push = plan
     assert not any(b for _, b in prim.log), [l for l, b in prim.log if b]  # nothing blocked
     # looking again from home finds it on the glass: done
     prim.env._tracker.refresh = lambda b, t: (prim.scene.update(cube_blue=_obj(0.45, 0.5, 10, 10)), prim.scene)[1]
