@@ -54,6 +54,8 @@ COLOUR = {  # name: {view: [(hsv low, hsv high), ...]}
     "cube_blue": dict(base=[((104, 90, 35), (118, 255, 90))], top=[((104, 200, 90), (114, 255, 150))]),
     "cube_white": dict(base=[((95, 20, 70), (115, 55, 130))], top=[((50, 0, 170), (80, 30, 255))]),
 }
+HIDDEN_KEEP_PX = 12  # an object on the glass that vanishes from below keeps its place while its top-view mask stays
+                     # within this of where it was when last seen from below
 IN_NOTCH_FRAC = 0.8  # share of a cube's top-view mask inside the slot's outline for it to count as in the notch
 AREA_PX = {"cube": (1050, 3200), "slot": (4300, 10500), "pan": (4300, 5900)}  # kind: (base view, top view)
 AREA_TOL = (0.35, 2.5)  # a colour region or a mask outside these multiples of AREA_PX is not that object
@@ -94,6 +96,7 @@ class ObjectState:
     inferred_px: tuple[float, float] | None = None  # stacked / off_glass: centre in the base view, inferred from the top view
     inferred_xy: tuple[float, float] | None = None  # the same in robot x, y (rough: an obstacle for the filter, not a measurement)
     inferred_angle_deg: float | None = None  # its in-plane angle in the base view, where known (a cube in the slot)
+    top_ref: np.ndarray | None = None  # top-view mask centre when it was last seen from below (on_glass)
     in_notch: bool = False  # stacked on the slot and, in the top view, inside the slot's outline: in its notch
     mask_base: np.ndarray | None = None  # bool (480, 640), None if never prompted in this view
     mask_top: np.ndarray | None = None  # bool (720, 1280)
@@ -518,8 +521,18 @@ class SceneTracker:
             h = ROPE_HEIGHT_MM if name == "rope" else RIGID[kind][3]
             full = 2000 if name == "rope" else RIGID[kind][0] * RIGID[kind][1]
             s = ObjectState(name, "unaccounted", height_mm=h, mask_base=mb, mask_top=mt)
-            if mb is not None and mb.sum() >= 0.3 * full:
+            prev = self.states.get(name)
+            hidden = (name != "rope" and (mb is None or mb.sum() < 0.3 * full) and prev is not None and prev.status == "on_glass"
+                      and name in top_seen and prev.top_ref is not None
+                      and np.linalg.norm(np.argwhere(mt).mean(0) - prev.top_ref) < HIDDEN_KEEP_PX)
+            if hidden:
+                # on the glass a moment ago and not moved in the top view: the gripper hides it from below (prim_22,
+                # 2026-11-26: the white cube turned "off_glass" under the open tips and the grasp was refused). Keep it
+                # where it was. A lifted or pushed object moves in the top view and falls through to the rules below.
+                s.status, s.xy, s.footprint_xy, s.angle_deg, s.top_ref = "on_glass", prev.xy, prev.footprint_xy, prev.angle_deg, prev.top_ref
+            elif mb is not None and mb.sum() >= 0.3 * full:
                 s.status = "on_glass"
+                s.top_ref = np.argwhere(mt).mean(0) if name in top_seen else None  # compared against while hidden from below
                 c = max(cv2.findContours(mb.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0], key=cv2.contourArea)
                 (cx, cy), _, ang = cv2.minAreaRect(c)
                 poly = cv2.approxPolyDP(c, 2.0, True).reshape(-1, 2)

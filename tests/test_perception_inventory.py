@@ -63,3 +63,32 @@ def test_rope_one_piece():
     assert one.sum() == 700 and not one[60:64, 60:64].any()
     assert not st.one_piece(m, 500).any()                          # larger than a rope can be: not the rope
     assert not st.one_piece(np.zeros((5, 5), bool), 10).any()
+
+
+def test_cube_hidden_from_below_keeps_its_place():
+    """prim_22 (2026-11-26): the open tips over the white cube hid it from below; it became "off_glass" (a 30 mm,
+    16 mm tall obstacle) and the grasp was refused. Unmoved in the top view, it stays where it was."""
+    from types import SimpleNamespace
+    tr = st.SceneTracker.__new__(st.SceneTracker)
+    tr.base, tr.top = SimpleNamespace(masks={}), SimpleNamespace(masks={})
+    tr._top_sat, tr._top_hsv, tr.H = None, np.zeros((720, 1280, 3), np.uint8), np.eye(3)
+    tr._px_to_xy = lambda pts: np.asarray(pts, float).reshape(-1, 2) / 1000
+    tr.states = {n: st.ObjectState(n, "unaccounted") for n in st.INVENTORY}
+
+    def sq(shape, y, x, k):
+        m = np.zeros(shape, bool)
+        m[y:y + k, x:x + k] = True
+        return m
+
+    def see(base_y, top_y):
+        tr.base.masks["cube_white"] = sq((480, 640), 200, 300, 32) if base_y else np.zeros((480, 640), bool)
+        tr.top.masks["cube_white"] = sq((720, 1280), top_y, 600, 40)
+        return tr._update()["cube_white"]
+    s0 = see(True, 400)
+    assert s0.status == "on_glass"
+    s1 = see(False, 404)  # hidden from below, top view about the same: kept, same footprint
+    assert s1.status == "on_glass" and np.allclose(s1.footprint_xy, s0.footprint_xy)
+    assert see(False, 410).status == "on_glass"
+    assert see(False, 416).status != "on_glass"  # crept 16 px from where it was last seen from below: no longer trusted
+    assert see(False, 300).status != "on_glass"  # lifted
+
