@@ -126,15 +126,23 @@ class Primitives:
         d = np.asarray(direction, float) / np.linalg.norm(direction)
         c, fp = np.array(s.xy), np.asarray(s.footprint_xy)
         back = float(((c - fp) @ d).max())  # how far the object reaches behind its centre
-        start = c - d * (back + (cf.FINGER_MM[1] / 2 + APPROACH_MM) * cf.MM)
-        end = start + d * (APPROACH_MM + dist_mm) * cf.MM
         rot = ((np.arctan2(d[1], d[0]) + np.pi / 2) % np.pi) / np.pi
         x0, y0, x1, y1 = cf.GLASS
-        m = 10 * cf.MM  # the closed tips reach 7 mm either side
+        m = cf.CLEAR_MM * cf.MM
+
+        def inside(p):  # both closed tips over the glass, clear of the frame
+            t = np.concatenate(cf.finger_polys([*self._cmd(p, rot).values(), 0, rot, self.closed]))
+            return x0 + m <= t[:, 0].min() and t[:, 0].max() <= x1 - m and y0 + m <= t[:, 1].min() and t[:, 1].max() <= y1 - m
+
+        # the run-up is shortened when the frame is close behind the object (pan 17 mm from the frame, 2026-11-26)
+        starts = [c - d * (back + (cf.FINGER_MM[1] / 2 + a) * cf.MM) for a in (APPROACH_MM, 6.0, 3.0)]
+        start = next((p for p in starts if inside(p)), starts[0])
+        end = c + d * (dist_mm * cf.MM - back - cf.FINGER_MM[1] / 2 * cf.MM)
         tip = PUSH_TIP_MM
-        if not (x0 + m <= start[0] <= x1 - m and y0 + m <= start[1] <= y1 - m):  # the push starts over the frame
+        if not inside(start):  # the push starts over the frame
             if s.height_mm < 10:
-                return False  # the tips cannot get low enough behind it (the pan at the frame)
+                print(f"push {name}: the frame is right behind it and it is too low to catch from over the frame: nothing done", flush=True)
+                return False
             tip = OVER_FRAME_TIP_MM
         return self._run(f"push {name}", [("up", dict(z=1.0)), ("close", dict(grip=self.closed)), ("turn", dict(rot=rot)),
                                            ("behind it", self._cmd(start, rot)), ("down", dict(z=z_for_tip(tip))),

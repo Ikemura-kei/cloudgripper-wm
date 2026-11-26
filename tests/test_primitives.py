@@ -66,6 +66,9 @@ def test_objects_against_the_frame(prim):
     # low-x frame: the arm cannot get behind (its range ends at the glass edge), the push is given up
     prim.scene.clear(); prim.scene.update(slot=_obj(x0 + 8 * cf.MM, 0.5, 15, 16, 25.5))
     assert not prim.push("slot", (1, 0), 30)
+    # 17 mm of glass behind the pan (robot20, 2026-11-26): a shorter run-up fits, the push is done
+    prim.scene.clear(); prim.scene.update(pan=_obj(x0 + 27 * cf.MM, 0.5, 20, 7))
+    assert prim.push("pan", (1, 0), 30)
     # a cube against either frame is picked up (tips along the frame, a little towards the glass) and put down
     for x in (x0 + 5 * cf.MM, x1 - 5 * cf.MM):
         prim.scene.clear(); prim.scene.update(cube_blue=_obj(x, 0.5, 10, 10))

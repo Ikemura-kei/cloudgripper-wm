@@ -52,7 +52,7 @@ COLOUR = {  # name: {view: [(hsv low, hsv high), ...]}
                  top=[((0, 180, 150), (5, 255, 255)), ((175, 180, 150), (179, 255, 255))]),
     "pan": dict(base=[((80, 60, 25), (104, 255, 80))], top=[((78, 180, 70), (90, 255, 160))]),
     "cube_blue": dict(base=[((104, 90, 35), (118, 255, 90))], top=[((104, 200, 90), (114, 255, 150))]),
-    "cube_white": dict(base=[((95, 20, 70), (115, 55, 100))], top=[((50, 0, 170), (80, 30, 255))]),
+    "cube_white": dict(base=[((95, 20, 70), (115, 55, 130))], top=[((50, 0, 170), (80, 30, 255))]),
 }
 AREA_PX = {"cube": (1050, 3200), "slot": (4300, 10500), "pan": (4300, 5900)}  # kind: (base view, top view)
 AREA_TOL = (0.35, 2.5)  # a colour region or a mask outside these multiples of AREA_PX is not that object
