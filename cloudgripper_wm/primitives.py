@@ -328,6 +328,8 @@ class Primitives:
         # did it come up? In the top view a lifted object rises (about 100 px for the slot, prim_21). prim_21: the slot
         # slipped out on the lift, "holding slot" stayed, and the arm was later lowered onto it.
         after = self._top_c(name)
+        if ok and before is not None and after is not None:
+            print(f"grasp {name}: rose {before[1] - after[1]:.0f} px in the top view (needs {LIFT_RISE_PX})", flush=True)
         if ok and before is not None and after is not None and before[1] - after[1] < LIFT_RISE_PX:
             print(f"grasp {name}: it did not come up (top view: {before[1] - after[1]:.0f} px), letting go", flush=True)
             self.goto(f"grasp {name}: not lifted, opening", grip=self.open)  # opening also clears "holding"
@@ -352,6 +354,7 @@ class Primitives:
         if c0 is None or c1 is None:
             return True
         expect = c0 + tr.top_px(self.u._target_pos[:2]) - tr.top_px(xy0)
+        print(f"{label}: {held[0]} is {np.round(c1 - expect)} px from where the carry should have put it (allowed {DROP_PX})", flush=True)
         if abs(c1[1] - expect[1]) <= DROP_PX and abs(c1[0] - expect[0]) <= DROP_PX:
             return True
         print(f"{label}: {held[0]} is not where it should be in the gripper (top view, {c1 - expect} px off): dropped", flush=True)
