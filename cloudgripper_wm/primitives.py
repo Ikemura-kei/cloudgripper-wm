@@ -42,7 +42,11 @@ ROOM_MM, ROOM_PUSH_MM = 8.0, 25.0  # clutter: push length, and the room around t
 ROPE_STEP_MM = 8.0  # rope drag: grasp points tried every this far along the rope, from the end inwards
 SLOT_TOP_MM, SLOT_FLOOR_MM = 16.0, 5.0  # Slot.stl (stored upside down): walls' top, notch floor; the notch is 13.5 mm
                            # wide and 11 mm deep, so a seated cube's top (15 mm) is below the walls
-SLOT_PUSH_ABOVE_MM = 2.5   # cube out of slot by pushing: the tip this far above the notch floor
+# Cube out of slot by pushing: the height command for the open tip in the notch. ponytail: Z_TO_TIP_MM was measured with
+# the fingers closed, and the open tips sit higher (the fingers swing up as they open): at z 0.27 (7.5 mm closed) the
+# open tip passed over a seated cube, whose top is at 15 mm (prim_18, 2026-11-26). So they are at least 7.5 mm higher;
+# z 0 is the lowest there is. Aim with an open-tip height once it is measured (then: notch floor 5 mm + 2.5 mm).
+NOTCH_PUSH_Z = 0.0
 NOTCH_PUSH_GAP_MM = 4.0    # ... and it comes down this far from the slot's side (2 mm was refused in prim_17: the tracked
                            # outline is about 1 mm larger than the slot, and the filter adds LOWER_MM)
 SLOT_WALL_MM = 9.75        # centre of either 6 mm wall from the slot's centre, along its length (where it is grasped)
@@ -347,7 +351,7 @@ class Primitives:
         d = notch if np.dot(np.subtract(CENTRE, c), notch) >= 0 else -notch  # out of the end facing the glass centre
         rot = (a % np.pi) / np.pi  # tip axis along the slot's length: each tip is 5 mm across the notch
         half = cf.FINGER_MM[1] / 2  # a tip reaches this far along the push
-        z = z_for_tip(SLOT_FLOOR_MM + SLOT_PUSH_ABOVE_MM)
+        z = NOTCH_PUSH_Z
         (ax, bx), (ay, by) = self.u._x_range, self.u._y_range
         reason = ""
         for side in (1, -1):  # the other tip beside one end of the slot or the other: the first the filter allows
