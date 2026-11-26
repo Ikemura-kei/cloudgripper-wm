@@ -52,6 +52,7 @@ def test_top_cube_name():
     assert st._top_cube_name((44, 31, 216)) == "cube_white"
     assert st._top_cube_name((1, 201, 236)) is None    # the slot's red
     assert st._top_cube_name((114, 218, 100)) is None  # the blue frame in shade
+    assert st._top_cube_name((110, 237, 110), in_container=True) == "cube_blue"  # tilted in the slot, in shade
 
 
 def test_rope_one_piece():

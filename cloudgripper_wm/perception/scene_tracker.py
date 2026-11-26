@@ -194,11 +194,12 @@ def assign_inventory(cands: list[dict], wanted: set[str]) -> dict[str, int]:
     return out
 
 
-def _top_cube_name(hsv) -> str | None:
-    """Which cube a top-view colour is (blue cube 109/240/142, white cube 44/31/216 on 2026-11-23; the blue cube
-    tilted in the slot, in shade: 110/237/110 on 2026-11-26), or None."""
+def _top_cube_name(hsv, in_container: bool = False) -> str | None:
+    """Which cube a top-view colour is (blue cube 109/240/142, white cube 44/31/216 on 2026-11-23), or None.
+    The blue frame in shade (114/218/100) is about the blue cube in shade (110/237/110, tilted in the slot,
+    2026-11-26): darker blue counts as the cube only in or on a container, where the frame cannot be."""
     h, sat, val = hsv
-    return "cube_blue" if 95 <= h <= 130 and sat > 120 and val > 80 else "cube_white" if sat < 70 and val > 150 else None
+    return "cube_blue" if 95 <= h <= 130 and sat > 120 and val > (80 if in_container else 110) else "cube_white" if sat < 70 and val > 150 else None
 
 
 class _Stream:
@@ -426,7 +427,9 @@ class SceneTracker:
         top_hsv = cv2.cvtColor(top_bgr, cv2.COLOR_BGR2HSV)
         for n in [n for n in rigid_missing if n in self.top.ids and self.states[n].status != "on_glass"]:
             m = self.top.masks.get(n)  # a top-only track can drift onto something else: keep it only if it still looks right
-            if m is None or m.sum() < 150 or _top_cube_name(np.median(top_hsv[m], 0)) != n:
+            touching = [c for c in ("slot", "pan") if (cm := self.top.masks.get(c)) is not None and m is not None
+                        and (cv2.dilate(m.astype(np.uint8), np.ones((9, 9), np.uint8)).astype(bool) & cm).any()]
+            if m is None or m.sum() < 150 or _top_cube_name(np.median(top_hsv[m], 0), in_container=bool(touching)) != n:
                 self.top.remove(n)
         hidden = {n for n in rigid_missing if n.startswith("cube") and self.states[n].status != "on_glass" and n not in self.top.ids}
         for cont in [n for n, s in self.states.items() if s.status == "on_glass" and n != "rope"] if hidden else []:
@@ -440,7 +443,7 @@ class SceneTracker:
             k, lab, stats, _ = cv2.connectedComponentsWithStats(other)
             for i in sorted(range(1, k), key=lambda i: -stats[i, cv2.CC_STAT_AREA]):
                 x, y, w, h, area = stats[i]
-                name = _top_cube_name(np.median(top_hsv[lab == i], 0))
+                name = _top_cube_name(np.median(top_hsv[lab == i], 0), in_container=True)
                 if area >= 250 and max(w, h) < 2.5 * min(w, h) and name in hidden:
                     with self._ctx():
                         self.top.add(name, box=np.float32([x - 3, y - 3, x + w + 3, y + h + 3]))

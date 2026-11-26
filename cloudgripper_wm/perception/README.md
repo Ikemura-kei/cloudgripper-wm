@@ -53,8 +53,9 @@ on a second layout (2026-11-25) the white cube lay against the gantry rail, its 
 rail mount of about the right area was taken for it. With the check the mount is rejected, the shape fallback finds
 the cube, and a cube mask that later runs onto a robot part counts as not seen from below.
 
-The top-view name check for a cube (`_top_cube_name`) takes the blue cube down to value 80: tilted in the slot it is
-in shade (median value 110 on 2026-11-26, the old limit) and was reported unaccounted.
+The top-view name check for a cube (`_top_cube_name`) takes the blue cube down to value 80 where it touches the slot
+or the pan (tilted in the slot it is in shade, median value 110 on 2026-11-26, and was reported unaccounted);
+elsewhere it stays above 110, because the blue frame in shade (114/218/100) looks almost the same.
 
 Known limits: the HSV numbers come from two layouts and one lighting; from below the white cube has the gantry
 rail's grey and the blue cube the frame's and the cable chain's blue, so a cube touching those in the picture is not
