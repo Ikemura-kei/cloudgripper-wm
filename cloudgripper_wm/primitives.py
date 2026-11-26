@@ -42,11 +42,13 @@ ROOM_MM, ROOM_PUSH_MM = 8.0, 25.0  # clutter: push length, and the room around t
 ROPE_STEP_MM = 8.0  # rope drag: grasp points tried every this far along the rope, from the end inwards
 SLOT_TOP_MM, SLOT_FLOOR_MM = 16.0, 5.0  # Slot.stl (stored upside down): walls' top, notch floor; the notch is 13.5 mm
                            # wide and 11 mm deep, so a seated cube's top (15 mm) is below the walls
-# Cube out of slot by pushing: the height command for the open tip in the notch. ponytail: Z_TO_TIP_MM was measured with
-# the fingers closed, and the open tips sit higher (the fingers swing up as they open): at z 0.27 (7.5 mm closed) the
-# open tip passed over a seated cube, whose top is at 15 mm (prim_18, 2026-11-26). So they are at least 7.5 mm higher;
-# z 0 is the lowest there is. Aim with an open-tip height once it is measured (then: notch floor 5 mm + 2.5 mm).
-NOTCH_PUSH_Z = 0.0
+# Cube out of slot by pushing: the height command for the open tip in the notch (cube from 5 to 15 mm, floor 5 mm).
+# Z_TO_TIP_MM was measured with the fingers closed; open they sit 2 to 3 mm higher (Kei, 2026-11-26). Tried: z 0 hit
+# the slot's base under the notch (prim_19: tip below 5 mm), z 0.27 passed over the cube (prim_18: above 15 mm,
+# where the table + 3 mm says 10.5). 0.15 is in the middle: table + 2.5 mm gives 7 mm, and if the arm stops higher
+# when lowered from above, as 0.27 suggests, there are 8 mm to spare before it misses.
+# ponytail: one guess between two failures; measure the open tips at 0.1 to 0.3 if 0.15 misses too
+NOTCH_PUSH_Z = 0.15
 NOTCH_PUSH_GAP_MM = 4.0    # ... and it comes down this far from the slot's side (2 mm was refused in prim_17: the tracked
                            # outline is about 1 mm larger than the slot, and the filter adds LOWER_MM)
 SLOT_WALL_MM = 9.75        # centre of either 6 mm wall from the slot's centre, along its length (where it is grasped)

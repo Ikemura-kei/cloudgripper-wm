@@ -740,9 +740,9 @@ picks the next one. Written for cell 20; heights, approach distance and waiting 
   push is asked of the filter before anything moves), then the grasp is tried once more.
 - `rope_drag` grasps the rope across it at the first spot, from 12 mm in from the end and then every 8 mm along the
   whole rope, where the filter lets the open tips go down: a rope lying along the frame is taken where it leaves it.
-- `cube_out_of_slot(cube, way)`: push (one open tip, 5 mm across the 13.5 mm notch, goes along it at height command 0
-  and pushes the cube out of the end facing the glass centre; the open tips sit at least 7.5 mm above the closed-tip
-  heights in `Z_TO_TIP_MM`), drop, swing or grasp. Slot.stl is stored upside
+- `cube_out_of_slot(cube, way)`: push (one open tip, 5 mm across the 13.5 mm notch, goes along it at height command
+  0.15 and pushes the cube out of the end facing the glass centre; z 0 hit the slot's base, z 0.27 passed over the
+  cube; open tips sit 2 to 3 mm above the closed-tip heights in `Z_TO_TIP_MM`), drop, swing or grasp. Slot.stl is stored upside
   down: the notch floor is 5 mm up and a seated cube's top (15 mm) is below the walls (16 mm). Then the
   arm goes home and `look_again()` (the wrapper's refresh) says whether the cube is on the glass: a step alone keeps
   a cube that left the slot "stacked on slot".

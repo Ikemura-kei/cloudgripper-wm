@@ -299,7 +299,7 @@ class SceneTracker:
         with self._ctx():
             self.base, self.top = _Stream(self.pred, base_bgr), _Stream(self.pred, top_bgr)
         self.states = {n: ObjectState(n, "unaccounted") for n in INVENTORY}
-        self._top_sat = cv2.cvtColor(top_bgr, cv2.COLOR_BGR2HSV)[..., 1]
+        self._top_hsv = cv2.cvtColor(top_bgr, cv2.COLOR_BGR2HSV); self._top_sat = self._top_hsv[..., 1]
         return self._look(base_bgr, top_bgr)
 
     def refresh(self, base_bgr: np.ndarray, top_bgr: np.ndarray) -> dict[str, ObjectState]:
@@ -312,7 +312,7 @@ class SceneTracker:
             self.base.track(base_bgr)
             if top_bgr is not None:
                 self.top.track(top_bgr)
-                self._top_sat = cv2.cvtColor(top_bgr, cv2.COLOR_BGR2HSV)[..., 1]
+                self._top_hsv = cv2.cvtColor(top_bgr, cv2.COLOR_BGR2HSV); self._top_sat = self._top_hsv[..., 1]
         self._update()
         if top_bgr is not None:
             self._handoff(base_bgr)
@@ -538,7 +538,14 @@ class SceneTracker:
                     s.inferred_px, s.inferred_angle_deg = (cx, cy), ang % 90
                     # in the notch, or only touching the slot from the side? In the top view a cube in the notch lies
                     # inside the slot's convex outline; one leaning against the slot mostly outside it
-                    hull = cv2.fillConvexPoly(np.zeros(top_seen["slot"].shape, np.uint8), cv2.convexHull(np.argwhere(top_seen["slot"])[:, ::-1]), 1)
+                    # The slot's mask is cut to one piece: seen along its notch, the front wall can split it from the
+                    # back wall (2026-11-26). Its red near the mask counts too, so the outline spans both walls.
+                    near = cv2.dilate(top_seen["slot"].astype(np.uint8), np.ones((41, 41), np.uint8)).astype(bool)
+                    red = np.zeros(near.shape, bool)
+                    for lo, hi in COLOUR["slot"]["top"]:
+                        red |= cv2.inRange(self._top_hsv, lo, hi).astype(bool)
+                    slot_px = top_seen["slot"] | (red & near)
+                    hull = cv2.fillConvexPoly(np.zeros(slot_px.shape, np.uint8), cv2.convexHull(np.argwhere(slot_px)[:, ::-1]), 1)
                     inside = (top_seen[name] & cv2.dilate(hull, np.ones((7, 7), np.uint8)).astype(bool)).sum()
                     s.in_notch = bool(inside >= IN_NOTCH_FRAC * top_seen[name].sum())
                 elif mo is not None and mo.any():
