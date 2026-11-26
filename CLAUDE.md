@@ -734,14 +734,15 @@ picks the next one. Written for cell 20; heights, approach distance and waiting 
   spot, or pushed when no grasp fits; the rope is dragged. A pan with its handle towards a frame and its round part
   near it, and a slot with its long side against the low-x or low-y frame, stay where they are (no grasp fits and
   the arm's range, 0.05 to 0.95, ends at the glass edge on the low sides, so nothing gets behind them).
-- `grasp` takes a cube by two sides, the slot across its 15 mm width (low, on the solid base) and the pan by its handle (tried 15.5, 13 and 11 mm out from the round part's
+- `grasp` takes a cube by two sides, the slot across its 15 mm width on one of its walls and the pan by its handle (tried 15.5, 13 and 11 mm out from the round part's
   centre). The pan's round part is 20 mm and the open tips leave 22.5 mm: the filter refuses to lower around it.
   When no spot has room for the tips, `_make_room` first pushes the object or a rigid neighbour 25 mm (every candidate
   push is asked of the filter before anything moves), then the grasp is tried once more.
 - `rope_drag` grasps the rope across it at the first spot, from 12 mm in from the end and then every 8 mm along the
   whole rope, where the filter lets the open tips go down: a rope lying along the frame is taken where it leaves it.
-- `cube_out_of_slot(cube, way)`: push (closed tips 2.5 mm above the slot's prongs push the cube out along the notch,
-  out of the end facing the glass centre; worked on robot20, 2026-11-26), drop, swing or grasp (not yet run). Then the
+- `cube_out_of_slot(cube, way)`: push (one open tip, 5 mm across the 13.5 mm notch, goes along it 2.5 mm above its
+  floor and pushes the cube out of the end facing the glass centre), drop, swing or grasp. Slot.stl is stored upside
+  down: the notch floor is 5 mm up and a seated cube's top (15 mm) is below the walls (16 mm). Then the
   arm goes home and `look_again()` (the wrapper's refresh) says whether the cube is on the glass: a step alone keeps
   a cube that left the slot "stacked on slot".
 - Not written yet: the rope into and out of the slot.

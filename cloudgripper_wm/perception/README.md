@@ -86,7 +86,7 @@ A cube that is `stacked` or `off_glass` also gets `inferred_px`: where it would 
 offset to the object under it in the top view, kept inside that object's outline. `draw_states` shows it as a dashed
 square. A cube in the slot is put at the slot's centre with the slot's angle (it can only sit in the notch). It is
 marked `in_notch` when its top-view mask lies inside the slot's convex outline (80 %); one only touching the slot from
-the side is not. The collision filter then takes the slot as 24.5 mm tall (notch floor 11 mm, a cube wedged at most
+the side is not. The collision filter then takes the slot as 18.5 mm tall (notch floor 5 mm, a cube wedged at most
 13.5 mm high) instead of a cube taller and wider all round. A cube on
 the pan is good to about half a cube and its angle is not estimated; it is not a measurement.
 

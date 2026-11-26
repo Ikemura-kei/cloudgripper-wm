@@ -196,3 +196,16 @@ def test_cube_out_of_slot(prim, way):
     cube.in_notch = False; n = len(prim.log)
     assert not prim.cube_out_of_slot("cube_blue", way) and len(prim.log) == n
 
+
+def test_cube_pushed_out_after_moving_the_slot(prim):
+    x0 = cf.GLASS[0]
+    notch = lambda x: dict(slot=_obj(x, 0.5, 15, 16, 25.5),  # long along y: the notch runs along x, towards the frame
+                           cube_blue=SimpleNamespace(status="stacked", on="slot", height_mm=10, footprint_xy=None, inferred_xy=(x, 0.5), in_notch=True))
+    prim.scene.update(notch(x0 + 20 * cf.MM))
+    assert isinstance(prim._notch_push("cube_blue"), str)  # the tip would come down over the frame to enter the notch
+    looks = iter([notch(0.4), dict(cube_blue=_obj(0.45, 0.5, 10, 10))])  # after the carry; after the push
+    prim.env._tracker.refresh = lambda b, t: (prim.scene.update(next(looks)), prim.scene)[1]
+    assert prim.cube_out_of_slot("cube_blue", "push")
+    labels = [l for l, _ in prim.log]
+    assert labels.index("grasp slot: close") < labels.index("cube_blue out of slot (push): push")
+
