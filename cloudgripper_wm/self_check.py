@@ -1,7 +1,7 @@
 """Self-check of a play cell before and during data collection (Kei, 2026-11-27). MOVES THE ROBOT.
 
 The arm visits a fixed list of poses (`_plan`) through the filtered env like every other move, never below height
-LOW_Z (Kei). At each pose it takes both pictures and compares them with a reference recorded on the healthy robot
+0.35 (Kei). At each pose it takes both pictures and compares them with a reference recorded on the healthy robot
 at the same pose:
 - every axis got there and the gripper looks as it did: in the top view, the yellow block (the gripper's fixed
   anchor; it moves with x, y and height, not with the rotation) and the claw under it (the finger linkages; the
@@ -9,20 +9,25 @@ at the same pose:
   of the reference's (`_near`: closing twice leaves the fingers a few px apart);
 - the gripper hangs straight: the angle of the block's bottom edge matches the reference within TILT_DEG (+2.3 deg
   at x 0.5, y 0.5, top height on 2026-11-26, open, half and closed alike; Kei: a broken one tilts about 30 deg);
-- the base camera was not moved: the blue frame lies within FRAME_PX of the reference's (a moved top camera shows
-  as the block off at every pose);
+- the base camera was not moved: the navy frame's shift against the reference's, by phase correlation, is at most
+  FRAME_SHIFT_PX (a moved top camera shows as the block off at every pose);
 - the cameras deliver: no picture is the same array as the previous pose's (the env reuses the last frame when a
   fetch fails, which looks like an arm that did not move).
 The robot's reported pose is printed beside each pose, not judged: on 2026-11-23 its x, y lagged the arm, cause not
 established (Kei: network lag at that moment, open-loop error building up, or the stream of commands); these logs
 will tell whether it can be trusted. Motor currents are not judged either (Kei: never used).
 
-The reference lives in REF_DIR/<robot>, committed to git (Kei: safe from accidental deletion); recording refuses to
-write over an existing one.
+The height is checked at the reference x, y, down to LOW_Z: there the tips (about 19 mm) clear a cube and the slot,
+so only a stack or a cube in the slot under the gripper keeps it from running. At 0.35 the tips are below a cube's
+top and in the first recording (2026-11-27) none of three spots was free.
 
-Measured on the 2026-11-26 pictures (same pose, top height, 6 px slack): claw same state 0.98 to 1.0, half-open
-against closed 0.81, open against closed 0.19; base frame 0.986, shifted by 3 px 0.89, by 5 px 0.70.
-ponytail: limits from those five pictures; check them against the first healthy runs.
+The reference lives in REF_DIR/<robot>, committed to git (Kei: safe from accidental deletion). Recording adds the
+poses the reference lacks and never replaces one.
+
+Healthy numbers, 2026-11-27 (first check against the reference): block 1.0, claw 0.987 and up, base 0.945 and up,
+tilt within 0.1 deg of the reference, reported x, y within 0.001; frame shift at most 0.11 px over the ten
+reference pictures, and a 1 px shift reads 1 px. Distinguishing: claw half-open against closed 0.81, base yellow
+open against closed 0.59 (2026-11-26 pictures; the base view sees only ~270 yellow px at the top height).
 """
 from __future__ import annotations
 
@@ -36,11 +41,12 @@ from cloudgripper_wm import collision_filter as cf
 
 C, R = (0.5, 0.5), 1.0  # reference pose: middle of the arm's range, rotation 180 deg (fingers side-on to the top camera)
 HALF = 0.45            # half-open gripper command
-LOW_Z = 0.35           # lowest height in the check (Kei: a wrongly free-looking spot is less of a risk up there)
-LOW_SPOTS = ((0.5, 0.5), (0.3, 0.3), (0.7, 0.7))  # where the height is checked: the first one the filter allows
-YELLOW, BLUE = ((18, 120, 120), (35, 255, 255)), ((100, 150, 50), (130, 255, 255))  # HSV ranges, cell 20
-NEAR_PX, NEAR_MIN = 6, 0.92
-FRAME_PX, FRAME_MIN = 2, 0.95
+LOW_Z = 0.7            # lowest height in the check: tips ~19 mm, clear of a cube (15) and the slot (16) with CLEAR_MM
+YELLOW = ((18, 120, 120), (35, 255, 255))  # HSV ranges, cell 20
+NAVY = ((100, 70, 30), (125, 255, 160))    # the frame from below (S ~110, V ~70: the bright blue edge alone was too thin)
+FRAME_PIECE_PX = 5000  # frame pieces at least this large: it is two parts with a small gap (Kei); the blue cube is smaller
+NEAR_PX, NEAR_MIN, BASE_MIN = 6, 0.92, 0.85
+FRAME_SHIFT_PX = 2.0
 TILT_DEG = 10.0        # Kei, 2026-11-27
 REF_DIR = Path(__file__).parent / "self_check_ref"  # one reference per robot, in git
 
@@ -49,22 +55,30 @@ def _mask(img, hsv_range) -> np.ndarray:
     return cv2.inRange(cv2.cvtColor(img, cv2.COLOR_BGR2HSV), *hsv_range) > 0
 
 
-def _pieces(m):
-    n, lab, st, _ = cv2.connectedComponentsWithStats(m.astype(np.uint8))
-    return (None, None) if n < 2 else (lab == 1 + st[1:, 4].argmax(), st[1 + st[1:, 4].argmax()])
-
-
 def _split(top) -> tuple[np.ndarray, np.ndarray]:
     """Top view: the gripper's yellow block (the largest yellow piece) and the claw under it."""
     y = _mask(top, YELLOW)
-    blk, st = _pieces(y)
-    if blk is None:
+    n, lab, st, _ = cv2.connectedComponentsWithStats(y.astype(np.uint8))
+    if n < 2:
         return y, y
-    x, w = st[0], st[2]
+    i = 1 + st[1:, 4].argmax()
+    blk, x, w = lab == i, st[i, 0], st[i, 2]
     claw = cv2.morphologyEx((y & ~blk).astype(np.uint8), cv2.MORPH_OPEN, np.ones((9, 9), np.uint8)) > 0
     claw[:np.where(blk.any(1))[0].max()] = False
     claw[:, :max(0, x - w // 3)] = claw[:, x + w + w // 3:] = False
     return blk, claw
+
+
+def _frame(base) -> np.ndarray:
+    n, lab, st, _ = cv2.connectedComponentsWithStats(_mask(base, NAVY).astype(np.uint8))
+    return np.isin(lab, 1 + np.where(st[1:, 4] > FRAME_PIECE_PX)[0])
+
+
+def _shift(a, b) -> float:
+    """How far (px) mask b lies from mask a, by phase correlation; inf when either is empty."""
+    if not a.any() or not b.any():
+        return float("inf")
+    return float(np.hypot(*cv2.phaseCorrelate(a.astype(np.float32), b.astype(np.float32))[0]))
 
 
 def _tilt(blk) -> float:
@@ -88,27 +102,21 @@ def _near(a, b, px: int) -> float:
 
 def _measure(top, base) -> dict:
     blk, claw = _split(top)
-    frame = _pieces(_mask(base, BLUE))[0]
-    return dict(block=blk, claw=claw, base=_mask(base, YELLOW), frame=np.zeros(base.shape[:2], bool) if frame is None else frame,
-                tilt=_tilt(blk))
+    return dict(block=blk, claw=claw, base=_mask(base, YELLOW), frame=_frame(base), tilt=_tilt(blk))
 
 
-def _plan(prim, spots) -> list[tuple]:
-    """(label, x, y, z, rot, grip) for each pose: every axis both ways at the top height, then down at each spot."""
+def _plan(prim, low: bool) -> list[tuple]:
+    """(label, x, y, z, rot, grip) for each pose: every axis both ways at the top height, then down and up."""
     o, c, (x, y), up = prim.open, prim.closed, C, 1.0
     plan = [("open", x, y, up, R, o), ("closed", x, y, up, R, c), ("half", x, y, up, R, HALF),
             ("x+", x + .1, y, up, R, o), ("x-", x - .1, y, up, R, o), ("y+", x, y + .1, up, R, o), ("y-", x, y - .1, up, R, o),
             ("rot135", x, y, up, R - .25, o), ("rot90", x, y, up, R - .5, o), ("open_again", x, y, up, R, o)]
-    for i in spots:
-        sx, sy = LOW_SPOTS[i]
-        plan += [(f"s{i}_over", sx, sy, up, R, o), (f"s{i}_low_open", sx, sy, LOW_Z, R, o),
-                 (f"s{i}_low_closed", sx, sy, LOW_Z, R, c), (f"s{i}_up", sx, sy, up, R, c)]
-    return plan
+    return plan + ([("down_open", x, y, LOW_Z, R, o), ("down_closed", x, y, LOW_Z, R, c), ("up", x, y, up, R, c)] if low else [])
 
 
-def _free(prim, i: int) -> bool:
-    sx, sy = LOW_SPOTS[i]
-    over, low = [sx, sy, 1.0, R, prim.open], [sx, sy, LOW_Z, R, prim.open]
+def _free_below(prim) -> bool:
+    """Does the filter let the gripper down to LOW_Z at the reference x, y, and close there, as the scene is now?"""
+    over, low = [*C, 1.0, R, prim.open], [*C, LOW_Z, R, prim.open]
     return cf.check(over, low, prim.env.states).allowed and cf.check(low, [*low[:4], prim.closed], prim.env.states).allowed
 
 
@@ -130,17 +138,16 @@ def _overlay(img, cur, ref) -> np.ndarray:
 def self_check(prim, ref=None, out=None, record: bool = False) -> tuple[str, list[str]]:
     """Run the check with `prim` (Primitives on a FilteredCloudGripperWrapper after reset). Returns the status,
     "pass" | "fail" | "blocked" (the filter stopped a move: the scene, not the robot) | "recorded", and report lines.
-    `record`: save this run as the reference in `ref` (default REF_DIR/<robot>; healthy robot; low part at every free
-    spot). Otherwise compare with `ref`, and write one picture per pose to `out` (top and base, masks against the reference's)."""
+    `record`: add this run's poses that `ref` (default REF_DIR/<robot>) lacks; healthy robot only. Otherwise compare
+    with `ref`, and write one picture per pose to `out` (top and base, masks against the reference's)."""
     u = prim.u
     ref = Path(ref) if ref else REF_DIR / prim.env._name
-    if record and (ref / "poses.json").exists():
-        raise FileExistsError(f"{ref} already holds a reference: delete it first, on purpose")
-    spots = [i for i in range(len(LOW_SPOTS)) if (record or (ref / f"s{i}_low_open_top.jpg").exists()) and _free(prim, i)]
-    spots = spots if record else spots[:1]
-    lines = [] if spots else ["height not checked: no free spot to lower at"]
+    low = _free_below(prim)
+    if record and not low:
+        return "blocked", [f"something tall under the gripper at {C}: clear it, then record"]
+    lines = [] if low else [f"height not checked: something tall under the gripper at {C}"]
     recs = []
-    for label, *cmd in _plan(prim, spots):
+    for label, *cmd in _plan(prim, low):
         if not prim.goto(f"self-check: {label}", *cmd):
             prim._give_up("self-check")
             return "blocked", lines + [f"the filter blocked '{label}': the scene is in the way, not a robot fault"]
@@ -149,25 +156,34 @@ def self_check(prim, ref=None, out=None, record: bool = False) -> tuple[str, lis
         recs.append((label, cmd, top, cv2.cvtColor(base, cv2.COLOR_RGB2BGR), state))
     if record:
         ref.mkdir(parents=True, exist_ok=True)
-        for label, _, top, base, _ in recs:
+        poses = json.loads((ref / "poses.json").read_text()) if (ref / "poses.json").exists() else []
+        new = [r for r in recs if not (ref / f"{r[0]}_top.jpg").exists()]
+        for label, cmd, top, base, state in new:
             cv2.imwrite(str(ref / f"{label}_top.jpg"), top)
             cv2.imwrite(str(ref / f"{label}_base.jpg"), base)
-        (ref / "poses.json").write_text(json.dumps([dict(label=l, cmd=c, state=s) for l, c, _, _, s in recs], indent=1, default=float))
-        return "recorded", lines + [f"{len(recs)} poses saved to {ref} (low spots {[LOW_SPOTS[i] for i in spots]})"]
+            poses.append(dict(label=label, cmd=cmd, state=state))
+        (ref / "poses.json").write_text(json.dumps(poses, indent=1, default=float))
+        return "recorded", [f"{len(new)} new poses saved to {ref} ({', '.join(r[0] for r in new) or 'none'}); existing ones kept"]
 
     if out:
         Path(out).mkdir(parents=True, exist_ok=True)
     fails, prev = [], None
     for k, (label, cmd, top, base, state) in enumerate(recs):
-        rtop, rbase = cv2.imread(str(ref / f"{label}_top.jpg")), cv2.imread(str(ref / f"{label}_base.jpg"))
-        m, r = _measure(top, base), _measure(rtop, rbase)
-        near = {key: _near(m[key], r[key], NEAR_PX) for key in ("block", "claw", "base")} | {"frame": _near(m["frame"], r["frame"], FRAME_PX)}
-        bad = [f"{key} {v:.3f} < {FRAME_MIN if key == 'frame' else NEAR_MIN}" for key, v in near.items() if v < (FRAME_MIN if key == "frame" else NEAR_MIN)]
+        if not (ref / f"{label}_top.jpg").exists():
+            fails.append(f"{label}: not in the reference {ref} (record it)")
+            continue
+        m, r = _measure(top, base), _measure(cv2.imread(str(ref / f"{label}_top.jpg")), cv2.imread(str(ref / f"{label}_base.jpg")))
+        near = {key: _near(m[key], r[key], NEAR_PX) for key in ("block", "claw", "base")}
+        shift = _shift(r["frame"], m["frame"])
+        bad = [f"{key} {v:.3f} < {BASE_MIN if key == 'base' else NEAR_MIN}" for key, v in near.items() if v < (BASE_MIN if key == "base" else NEAR_MIN)]
+        if not shift <= FRAME_SHIFT_PX:
+            bad.append(f"base camera moved: frame {shift:.1f} px off")
         if not abs(m["tilt"] - r["tilt"]) <= TILT_DEG:  # nan (no block seen) fails too
             bad.append(f"block edge at {m['tilt']:+.1f} deg, reference {r['tilt']:+.1f}")
         if prev is not None and (np.array_equal(top, prev[0]) or np.array_equal(base, prev[1])):
             bad.append("same picture as the pose before (camera frozen or fetch failed)")
-        lines.append(f"{label:14s} " + "  ".join(f"{key} {v:.3f}" for key, v in near.items()) + f"  tilt {m['tilt']:+.1f} (ref {r['tilt']:+.1f})" + _reported(state, cmd))
+        lines.append(f"{label:12s} " + "  ".join(f"{key} {v:.3f}" for key, v in near.items()) + f"  frame {shift:.1f} px"
+                     + f"  tilt {m['tilt']:+.1f} (ref {r['tilt']:+.1f})" + _reported(state, cmd))
         fails += [f"{label}: {b}" for b in bad]
         prev = top, base
         if out:

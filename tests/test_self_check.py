@@ -11,22 +11,25 @@ from cloudgripper_wm.envs.constants import PLAY_MAX_DELTA
 from cloudgripper_wm.envs.filtered_wrapper import FilteredCloudGripperWrapper
 from cloudgripper_wm.envs.robot_pool import RobotPool
 from cloudgripper_wm.primitives import Primitives
-from cloudgripper_wm.self_check import LOW_Z, NEAR_MIN, NEAR_PX, R, TILT_DEG, _measure, _near, self_check
+from cloudgripper_wm.self_check import FRAME_SHIFT_PX, LOW_Z, NEAR_MIN, NEAR_PX, R, TILT_DEG, _frame, _measure, _near, _shift, self_check
 
-YELLOW = (0, 220, 240)  # BGR
+YELLOW, NAVY = (0, 220, 240), (110, 40, 30)  # BGR
 
 
-def _pics(tilt=0.0, gap=170, rng=np.random.default_rng(0)):
+def _pics(tilt=0.0, gap=170, moved=0, rng=np.random.default_rng(0)):
     """Top view: the gripper's block (tilted by `tilt` deg), two fingers `gap` px apart, the cable's yellow stripe.
-    Base view: the blue frame and the gripper. A little noise, so that no two pictures are the same array."""
+    Base view: the navy frame in two parts and the gripper, all `moved` px to the right (a camera that was moved).
+    A little noise, so that no two pictures are the same array."""
     top = np.full((720, 1280, 3), 200, np.uint8)
     cv2.fillPoly(top, [cv2.boxPoints(((660, 40), (210, 80), tilt)).astype(np.int32)], YELLOW)
     for x in (660 - gap // 2, 660 + gap // 2):
         cv2.rectangle(top, (x - 15, 180), (x + 15, 340), YELLOW, -1)
     cv2.line(top, (760, 220), (1100, 300), YELLOW, 3)
     base = np.full((480, 640, 3), 200, np.uint8)
-    cv2.rectangle(base, (60, 40), (580, 440), (200, 40, 20), 30)
+    cv2.rectangle(base, (60, 40), (580, 440), NAVY, 30)
+    base[238:242] = 200  # the gap where the frame's two parts meet
     cv2.circle(base, (320, 240), 12, YELLOW, -1)
+    base = np.roll(base, moved, 1)
     noise = lambda im: np.clip(im.astype(int) + rng.integers(-3, 4, im.shape), 0, 255).astype(np.uint8)
     return noise(top), noise(base)
 
@@ -38,6 +41,10 @@ def test_measures():
     assert _near(m["claw"], _measure(*_pics(gap=176))["claw"], NEAR_PX) >= NEAR_MIN  # closed again, a few px off
     assert _near(m["claw"], _measure(*_pics(gap=60))["claw"], NEAR_PX) < NEAR_MIN  # did not open
     assert abs(_measure(*_pics(tilt=30))["tilt"]) > TILT_DEG
+    f = _frame(_pics()[1])
+    assert abs(_shift(f, _frame(_pics(moved=3)[1])) - 3) < 0.2  # a moved camera reads its shift
+    f2 = f.copy(); f2[300:350, 40:95] = True  # the blue cube from below, against the frame
+    assert _shift(f, f2) < 0.5
 
 
 @pytest.fixture
@@ -65,12 +72,15 @@ def prim():
 def test_record_then_check(prim, tmp_path):
     ref = tmp_path / "ref"
     status, lines = self_check(prim, ref, record=True)
-    assert status == "recorded" and (ref / "s2_low_open_top.jpg").exists() and (ref / "poses.json").exists()
-    with pytest.raises(FileExistsError):
-        self_check(prim, ref, record=True)
+    assert status == "recorded" and (ref / "down_closed_top.jpg").exists() and (ref / "poses.json").exists()
+    kept = (ref / "open_top.jpg").read_bytes()
+    prim.look["pics"] = lambda: _pics(tilt=30)
+    status, lines = self_check(prim, ref, record=True)  # recording again adds nothing and replaces nothing
+    assert status == "recorded" and "0 new poses" in lines[0] and (ref / "open_top.jpg").read_bytes() == kept
+    prim.look["pics"] = _pics
     status, lines = self_check(prim, ref, out=tmp_path / "out")
     assert status == "pass", "\n".join(lines)
-    assert len(list((tmp_path / "out").glob("*.jpg"))) == 14 and any(l.startswith("s0_low_open") for l in lines)
+    assert len(list((tmp_path / "out").glob("*.jpg"))) == 13 and any(l.startswith("down_open") for l in lines)
     assert prim.u._target_pos[2] == 1.0  # ends at the top height
 
     prim.look["pics"] = lambda: _pics(tilt=30)  # the gripper hangs tilted
@@ -80,11 +90,15 @@ def test_record_then_check(prim, tmp_path):
     prim.look["pics"] = lambda: frozen  # the camera delivers the same frame
     status, lines = self_check(prim, ref)
     assert status == "fail" and any("same picture" in l for l in lines)
+    prim.look["pics"] = lambda: _pics(moved=4)
+    status, lines = self_check(prim, ref)
+    assert status == "fail" and any("base camera moved" in l for l in lines) and FRAME_SHIFT_PX < 4
 
     prim.look["pics"] = _pics
     tips = np.concatenate(cf.finger_polys([0.5, 0.5, LOW_Z, R, prim.open])).mean(0)
-    a = 12 * cf.MM  # 24 mm, wider than the open tips (22.5 mm), under the first low spot: the next one is used
-    prim.scene["cube_blue"] = SimpleNamespace(status="on_glass", on=None, xy=tuple(tips), height_mm=15, inferred_xy=None,
-                                              footprint_xy=tips + np.array([[-a, -a], [a, -a], [a, a], [-a, a]]))
+    a = 12 * cf.MM  # under the gripper, as tall as the slot with a cube in it: no height check, the rest runs
+    prim.scene["slot"] = SimpleNamespace(status="on_glass", on=None, xy=tuple(tips), height_mm=18.5, inferred_xy=None,
+                                         footprint_xy=tips + np.array([[-a, -a], [a, -a], [a, a], [-a, a]]))
     status, lines = self_check(prim, ref)
-    assert status == "pass" and any(l.startswith("s1_low_open") for l in lines) and not any(l.startswith("s0_") for l in lines), "\n".join(lines)
+    assert status == "pass" and "height not checked" in lines[0] and not any(l.startswith("down_") for l in lines), "\n".join(lines)
+    assert self_check(prim, tmp_path / "ref2", record=True)[0] == "blocked"  # a reference is recorded whole

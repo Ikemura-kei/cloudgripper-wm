@@ -1,0 +1,202 @@
+[
+ {
+  "label": "open",
+  "cmd": [
+   0.5,
+   0.5,
+   1.0,
+   1.0,
+   0.825
+  ],
+  "state": {
+   "x_norm": 0.5007857142857143,
+   "y_norm": 0.49971428571428567,
+   "z_norm": 1.0,
+   "rotation": 180,
+   "claw_norm": 0.8222222222222222,
+   "z_current": "-0.01",
+   "rotation_current": "-0.11",
+   "claw_current": "-0.04"
+  }
+ },
+ {
+  "label": "closed",
+  "cmd": [
+   0.5,
+   0.5,
+   1.0,
+   1.0,
+   0.1
+  ],
+  "state": {
+   "x_norm": 0.5007857142857143,
+   "y_norm": 0.49971428571428567,
+   "z_norm": 1.0,
+   "rotation": 180,
+   "claw_norm": 0.09999999999999998,
+   "z_current": "-0.00",
+   "rotation_current": "-0.09",
+   "claw_current": "-0.05"
+  }
+ },
+ {
+  "label": "half",
+  "cmd": [
+   0.5,
+   0.5,
+   1.0,
+   1.0,
+   0.45
+  ],
+  "state": {
+   "x_norm": 0.5007857142857143,
+   "y_norm": 0.49971428571428567,
+   "z_norm": 1.0,
+   "rotation": 180,
+   "claw_norm": 0.4444444444444444,
+   "z_current": "-0.00",
+   "rotation_current": "-0.11",
+   "claw_current": "-0.05"
+  }
+ },
+ {
+  "label": "x+",
+  "cmd": [
+   0.6,
+   0.5,
+   1.0,
+   1.0,
+   0.825
+  ],
+  "state": {
+   "x_norm": 0.6007857142857143,
+   "y_norm": 0.49964285714285717,
+   "z_norm": 1.0,
+   "rotation": 180,
+   "claw_norm": 0.8222222222222222,
+   "z_current": "0.00",
+   "rotation_current": "-0.10",
+   "claw_current": "-0.04"
+  }
+ },
+ {
+  "label": "x-",
+  "cmd": [
+   0.4,
+   0.5,
+   1.0,
+   1.0,
+   0.825
+  ],
+  "state": {
+   "x_norm": 0.40107142857142863,
+   "y_norm": 0.49971428571428567,
+   "z_norm": 1.0,
+   "rotation": 180,
+   "claw_norm": 0.8222222222222222,
+   "z_current": "-0.01",
+   "rotation_current": "-0.10",
+   "claw_current": "-0.06"
+  }
+ },
+ {
+  "label": "y+",
+  "cmd": [
+   0.5,
+   0.6,
+   1.0,
+   1.0,
+   0.825
+  ],
+  "state": {
+   "x_norm": 0.5008571428571429,
+   "y_norm": 0.5995714285714285,
+   "z_norm": 1.0,
+   "rotation": 180,
+   "claw_norm": 0.8222222222222222,
+   "z_current": "0.03",
+   "rotation_current": "-0.08",
+   "claw_current": "-0.04"
+  }
+ },
+ {
+  "label": "y-",
+  "cmd": [
+   0.5,
+   0.4,
+   1.0,
+   1.0,
+   0.825
+  ],
+  "state": {
+   "x_norm": 0.501,
+   "y_norm": 0.3997857142857143,
+   "z_norm": 1.0,
+   "rotation": 180,
+   "claw_norm": 0.8222222222222222,
+   "z_current": "0.02",
+   "rotation_current": "-0.11",
+   "claw_current": "-0.06"
+  }
+ },
+ {
+  "label": "rot135",
+  "cmd": [
+   0.5,
+   0.5,
+   1.0,
+   0.75,
+   0.825
+  ],
+  "state": {
+   "x_norm": 0.5008571428571429,
+   "y_norm": 0.49964285714285717,
+   "z_norm": 1.0,
+   "rotation": 135,
+   "claw_norm": 0.8222222222222222,
+   "z_current": "-0.01",
+   "rotation_current": "-0.08",
+   "claw_current": "-0.07"
+  }
+ },
+ {
+  "label": "rot90",
+  "cmd": [
+   0.5,
+   0.5,
+   1.0,
+   0.5,
+   0.825
+  ],
+  "state": {
+   "x_norm": 0.5008571428571429,
+   "y_norm": 0.49964285714285717,
+   "z_norm": 1.0,
+   "rotation": 90,
+   "claw_norm": 0.8222222222222222,
+   "z_current": "-0.01",
+   "rotation_current": "-0.08",
+   "claw_current": "-0.04"
+  }
+ },
+ {
+  "label": "open_again",
+  "cmd": [
+   0.5,
+   0.5,
+   1.0,
+   1.0,
+   0.825
+  ],
+  "state": {
+   "x_norm": 0.5008571428571429,
+   "y_norm": 0.49964285714285717,
+   "z_norm": 1.0,
+   "rotation": 180,
+   "claw_norm": 0.8222222222222222,
+   "z_current": "-0.01",
+   "rotation_current": "-0.10",
+   "claw_current": "-0.04"
+  }
+ }
+]

@@ -765,12 +765,15 @@ picks the next one. Written for cell 20; heights, approach distance and waiting 
 Before play-data collection, every 15 episodes and after any surprise (Kei, 2026-11-27): the arm visits fixed poses
 through the filtered env, never below height 0.35 (Kei), and each pose is compared with a reference recorded on the
 healthy robot: every axis both ways at the top height around x 0.5, y 0.5, rotation 180 deg; the gripper open,
-half-open and closed; then down to 0.35 at the first of `LOW_SPOTS` the filter calls free. It judges the gripper's
-yellow block (fixed anchor, does not rotate) and claw in the top view and the yellow in the base view against the
-reference with a few px of slack, the block's bottom-edge angle (tilt: a broken gripper hangs about 30 deg off), the
-blue frame in the base view (camera moved) and fresh pictures (the env reuses the last frame when a fetch fails).
-The reported pose is printed per pose, not judged (whether it can be trusted is open: on 2026-11-23 it lagged, cause
-not established); motor currents are not used (Kei: never used). Tilt limit 10 deg (Kei). Limits come from the five 2026-11-26 pictures.
-The reference is `cloudgripper_wm/self_check_ref/<robot>/`, committed to git (Kei: safe from accidental deletion).
+half-open and closed; then down to 0.7 there and up (tips ~19 mm clear a cube and the slot; at 0.35 nearly any
+neighbour blocked the spot). It judges the gripper's yellow block (fixed anchor, does not rotate) and claw in the
+top view and the yellow in the base view against the reference with a few px of slack, the block's bottom-edge angle
+(tilt, limit 10 deg, Kei: a broken gripper hangs about 30 deg off), the base camera's shift (phase correlation of the
+navy frame, two parts with a gap, limit 2 px; healthy 0.1 to 0.3 px across scenes, blue cube included) and fresh
+pictures (the env reuses the last frame when a fetch fails). The reported pose is printed per pose, not judged
+(whether it can be trusted is open: on 2026-11-23 it lagged, cause not established; 2026-11-27 it matched within
+0.001); motor currents are not used (Kei: never used).
+The reference is `cloudgripper_wm/self_check_ref/<robot>/`, committed to git (Kei: safe from accidental deletion);
+`--record` adds the poses it lacks and never replaces one.
 `scripts/self_check.py --out DIR [--record] [--ref DIR]` runs it (exit 0 pass, 1 fail, 2 blocked by the scene);
-`tests/test_self_check.py`. Not yet run on the robot; no reference recorded yet.
+`tests/test_self_check.py`. robot20: top-height poses recorded and checked once (2026-11-27); height poses not yet.
