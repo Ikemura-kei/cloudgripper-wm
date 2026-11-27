@@ -7,8 +7,10 @@
 MOVES THE ROBOT, through the collision filter, never below height 0.35.
 
   export CLOUDGRIPPER_TOKEN=...
-  uv run scripts/self_check.py --out DIR --ref REF --record   # once, on the healthy robot: REF becomes the reference
-  uv run scripts/self_check.py --out DIR --ref REF            # a check against it
+  uv run scripts/self_check.py --out DIR --record   # once, on the healthy robot: the reference, then commit it
+  uv run scripts/self_check.py --out DIR            # a check against it
+
+The reference is cloudgripper_wm/self_check_ref/<robot> unless --ref names another directory.
 
 Exit status: 0 pass (or recorded), 1 fail, 2 a move was blocked by the filter (the scene is in the way, not a robot
 fault). The window shows every move as primitives_check.py does; DIR gets check.mp4 and, for a check, one picture per
@@ -32,7 +34,7 @@ from cloudgripper_wm.self_check import self_check  # noqa: E402
 p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
 p.add_argument("--robot", default="robot20")
 p.add_argument("--out", required=True)
-p.add_argument("--ref", required=True, help="reference directory")
+p.add_argument("--ref", help="reference directory (default: cloudgripper_wm/self_check_ref/<robot>)")
 p.add_argument("--record", action="store_true", help="record the reference (healthy robot only)")
 a = p.parse_args()
 

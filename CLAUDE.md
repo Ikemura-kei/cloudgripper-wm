@@ -769,6 +769,8 @@ half-open and closed; then down to 0.35 at the first of `LOW_SPOTS` the filter c
 yellow block (fixed anchor, does not rotate) and claw in the top view and the yellow in the base view against the
 reference with a few px of slack, the block's bottom-edge angle (tilt: a broken gripper hangs about 30 deg off), the
 blue frame in the base view (camera moved) and fresh pictures (the env reuses the last frame when a fetch fails).
-The reported state is not used (x, y trailed the arm, 2026-11-23), nor the motor currents (Kei: never used). Limits come from the five 2026-11-26 pictures.
-`scripts/self_check.py --out DIR --ref REF [--record]` runs it (exit 0 pass, 1 fail, 2 blocked by the scene);
+The reported pose is printed per pose, not judged (whether it can be trusted is open: on 2026-11-23 it lagged, cause
+not established); motor currents are not used (Kei: never used). Tilt limit 10 deg (Kei). Limits come from the five 2026-11-26 pictures.
+The reference is `cloudgripper_wm/self_check_ref/<robot>/`, committed to git (Kei: safe from accidental deletion).
+`scripts/self_check.py --out DIR [--record] [--ref DIR]` runs it (exit 0 pass, 1 fail, 2 blocked by the scene);
 `tests/test_self_check.py`. Not yet run on the robot; no reference recorded yet.
