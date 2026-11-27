@@ -1,4 +1,5 @@
 """Play primitives on the mock robot with a made-up scene (cell 20): the sequences run, and a blocked move gives up."""
+import collections
 from types import SimpleNamespace
 
 import cv2
@@ -356,15 +357,19 @@ def test_scene_check(prim):
 
 
 def test_random_primitive(prim):
-    """Kinds by PLAY_WEIGHTS among those the scene allows; targets keep clear of the frame."""
+    """The object first, evenly among those with a candidate, then its kind by PLAY_WEIGHTS; targets keep clear of the
+    frame."""
     rng = np.random.default_rng(0)
     prim.scene.update(cube_blue=_obj(0.4, 0.4, 15, 15), cube_white=_obj(0.5, 0.6, 15, 15), slot=_obj(0.6, 0.4, 15, 16, 25.5),
                       pan=_obj(0.3, 0.6, 20, 7), rope=_obj(0.45, 0.25, 60, 8, 8))
     assert prim.goto("test: a step", x=0.4)  # the fixture wants at least one step sent
     picks = [prim.random_primitive(rng) for _ in range(150)]
     kinds = {k: sum(p[0] == k for p in picks) for k in PLAY_WEIGHTS}
-    # cube into slot (weight 2) is always possible here; pick-and-place only when a free spot is drawn (FREE_MM)
-    assert kinds["cube_out_of_slot"] == 0 and kinds["cube_into_slot"] > 1.5 * kinds["rope_drag"] and kinds["pick_place"] > 0
+    # five objects, each about a fifth; for a cube, pick-and-place or into the slot (2) before a push (1)
+    objs = collections.Counter("rope" if k == "rope_drag" else a[0] for k, a in picks)
+    assert set(objs) == {"cube_blue", "cube_white", "slot", "pan", "rope"} and min(objs.values()) > 0.1 * len(picks), objs
+    cube = collections.Counter(k for k, a in picks if a[0] in ("cube_blue", "cube_white"))
+    assert kinds["cube_out_of_slot"] == 0 and cube["cube_into_slot"] + cube["pick_place"] > 2 * cube["push"] and kinds["pick_place"] > 0
     x0, y0, x1, y1 = cf.GLASS
     for k, a in picks:
         if k == "pick_place":

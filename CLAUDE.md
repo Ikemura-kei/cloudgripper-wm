@@ -789,8 +789,9 @@ the time, never into a height change. Larger steps than `PLAY_MAX_DELTA` need th
   problems: an object neither on the glass nor a cube in the slot's notch; a rigid object within `EDGE_MM` (10 mm,
   first guess) of the frame; the rope only when all of it is (Kei: any part well inside can be dragged). The collection runs reset_objects once on problems, checks
   again, then stops for a person. Runs in primitives_check.py as `scene_check`. Not yet run on the robot.
-- `random_primitive(rng)` for play (Kei, 2026-11-27): the kind by `PLAY_WEIGHTS` (pick-and-place, cube into and out of
-  the slot 2; push, rope drag 1) among the kinds the scene allows, then a random candidate; pick-and-place carries the
+- `random_primitive(rng)` for play (Kei, 2026-11-27): the object first, evenly among those with a candidate (with the
+  kind first, play_1 episode 5 moved only the white cube), then one of its candidates by `PLAY_WEIGHTS` (pick-and-place,
+  cube into and out of the slot 2; push, rope drag 1); pick-and-place carries the
   cubes only (`PLAY_CARRY`) until the slot and pan grasps have run supervised; targets keep objects EDGE_MM + 5 mm
   from the frame. Pushes (up to 8 directions per object), rope drags and pushes out of the slot are offered only when
   they fit as the scene is now (play_1: three of five primitives were refused or stopped); about 0.3 s per draw.

@@ -455,12 +455,17 @@ class Primitives:
         spot = self._rope_spot(end) if on("rope") else []
         if on("rope") and (not isinstance(spot, list) or self._rope_room(spot, end)):  # a spot fits, or a push makes one
             cand["rope_drag"].append((end, tuple(float(v) for v in unit(rng.uniform(0, 2 * np.pi)) * rng.uniform(*PLAY_DRAG_MM) * cf.MM)))
-        kinds = [k for k in PLAY_WEIGHTS if cand[k]]
-        if not kinds:
+        # the object first, evenly among those with a candidate, then one of its candidates by PLAY_WEIGHTS (Kei,
+        # 2026-11-27: with the kind first, play_1 episode 5 moved only the white cube, the one carried object)
+        pool = [(k, a) for k in PLAY_WEIGHTS for a in cand[k]]
+        if not pool:
             return None
-        w = np.array([PLAY_WEIGHTS[k] for k in kinds], float)
-        kind = kinds[rng.choice(len(kinds), p=w / w.sum())]
-        return kind, cand[kind][rng.integers(len(cand[kind]))]
+        obj = lambda k, a: "rope" if k == "rope_drag" else a[0]
+        objs = sorted({obj(k, a) for k, a in pool})
+        o = objs[rng.integers(len(objs))]
+        mine = [(k, a) for k, a in pool if obj(k, a) == o]
+        w = np.array([PLAY_WEIGHTS[k] for k, _ in mine], float)
+        return mine[rng.choice(len(mine), p=w / w.sum())]
 
     def grasp(self, name: str, make_room: bool = True, along_mm: float | None = None, lift: bool = True) -> bool:
         """Open, go down around `name`, close, lift. A cube is taken with the tips along one of its sides, the pan
