@@ -16,6 +16,7 @@ The session folder `out`:
                              resets, self-checks, the stop
     episodes/ep_NNNNN/       frames/NNNN_top.jpg, NNNN_base.jpg   the camera frames as taken (base: fisheye), before
                                                                    each step and after the last
+                             frames/NNNN_base_rect.jpg  the base frame rectified, as the tracker sees it (Kei, 2026-11-27)
                              steps.npz      state (commanded pose per frame), action (executed delta per step);
                                             written when the episode ends: a folder without it is incomplete
                              diag.jsonl     per step: label (primitive and phase), requested and executed action,
@@ -66,6 +67,8 @@ class Recorder:
         u = self.env.unwrapped
         cv2.imwrite(str(self.dir / "frames" / f"{len(self.state):04d}_top.jpg"), u._last_top_img, [cv2.IMWRITE_JPEG_QUALITY, 95])
         cv2.imwrite(str(self.dir / "frames" / f"{len(self.state):04d}_base.jpg"), u._last_base_img, [cv2.IMWRITE_JPEG_QUALITY, 95])
+        cv2.imwrite(str(self.dir / "frames" / f"{len(self.state):04d}_base_rect.jpg"), self.env._proc.undistort_fish_eye(u._last_base_img),
+                    [cv2.IMWRITE_JPEG_QUALITY, 95])
         save_states(self.dir / "states" / f"{len(self.state):04d}.npz", self.env.states)
         self.state.append(u._target_pos.copy())
 

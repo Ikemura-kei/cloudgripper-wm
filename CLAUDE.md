@@ -763,12 +763,15 @@ picks the next one. Written for cell 20; heights, approach distance and waiting 
   (2026-11-27): two pushes went down and were stopped on the way, one with the tips over the white cube's corner
   (outline 1.9 mm under them; the filter's own lowering margin, LOWER_MM 1.5, is small for grasps around a cube, and
   its height table put the tips 4.8 mm above the cube where Kei saw them touch it).
+  When the rope lies where the tips come down, an object 4 mm taller than the rope is pushed from over it: tips at
+  `OVER_ROPE_TIP_MM` (10.6, rope 8 mm + CLEAR_MM + 0.6), so in practice the slot, and only on its solid ends (within
+  45 deg of its length: across it, the notch is open from 5 mm up and holds a cube). Kei, 2026-11-27: the slot in
+  play_1 lay in the rope's bend with the pan against it, and every low start was on the rope or the pan.
 - `rope_drag` grasps the rope across it at the first spot, from 12 mm in from the end and then every 8 mm along the
   whole rope, where the filter lets the open tips go down: a rope lying along the frame is taken where it leaves it.
   No spot: a 25 mm push of the object most often under the tips, in the first of eight directions (towards the
   centre first) that fits and leaves a spot with its outline moved (Kei, 2026-11-27: the slot beside the rope in
-  play_1). In play_1's end layout none fits: the slot lies in the rope's bend with the pan against it and the frame
-  behind; only carrying the slot would free the rope there.
+  play_1). In play_1's end layouts the slot is pushed 25 mm about along its length, from over the rope.
 - `cube_out_of_slot(cube, way)`: push (one open tip, 5 mm across the 13.5 mm notch, goes along it at height command
   0.15 and pushes the cube out of the end facing the glass centre; z 0 hit the slot's base, z 0.27 passed over the
   cube; open tips sit 2 to 3 mm above the closed-tip heights in `Z_TO_TIP_MM`), drop, swing or grasp. Slot.stl is stored upside
@@ -825,11 +828,11 @@ self-check at the start, every 15 episodes and after a surprise (`Primitives.sur
 on nothing), once more on failure, then stop. A stop raises the arm, opens the gripper and returns the reason. Only
 the primitives' steps are recorded. `scripts/data/collect_play.py --out SESSION --episodes N [--seed S] [--no-window]`
 runs it (continues a session's episode numbers). The session folder holds per episode the camera frames at full size
-(top and fisheye base, JPEG 95), steps.npz (commanded pose per frame, executed delta per step), diag.jsonl (per step:
+(top, fisheye base and the base rectified as the tracker sees it, `NNNN_base_rect.jpg`, Kei 2026-11-27; JPEG 95), steps.npz (commanded pose per frame, executed delta per step), diag.jsonl (per step:
 label, requested and executed action, the collision filter's verdict, held, commanded and reported pose) and the
 tracker's states with masks per frame. A step the filter blocked is in diag.jsonl only (zero action, unchanged scene;
 Kei, 2026-11-27: not in the training data), plus session.jsonl and the self-checks. `scripts/data/play_to_lance.py
 OUT.lance SESSION...` (own uv environment: stable-worldmodel[data] from the parent repo's checkout) writes the training
-data, frames and steps only: pixels, pixels_base, state, action (NaN on an episode's last frame); checked to load
+data, frames and steps only: pixels, pixels_base (the rectified base frame), state, action (NaN on an episode's last frame); checked to load
 with `swm.data.load_dataset` at full size. `tests/test_play.py` (the Lance test skips where lancedb is missing).
 Not yet run on the robot.

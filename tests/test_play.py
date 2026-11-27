@@ -56,7 +56,7 @@ def test_collect(setup):
         z = np.load(ep / "steps.npz")
         n = len(z["action"])
         assert 0 < n and z["state"].shape == (n + 1, 5) and z["action"].shape == (n, 5)
-        assert len(list((ep / "frames").glob("*_top.jpg"))) == n + 1 == len(list((ep / "states").glob("*.npz")))
+        assert len(list((ep / "frames").glob("*_top.jpg"))) == n + 1 == len(list((ep / "states").glob("*.npz"))) == len(list((ep / "frames").glob("*_base_rect.jpg")))
         diag = [json.loads(l) for l in (ep / "diag.jsonl").read_text().splitlines()]
         assert sum(not d["blocked"] for d in diag) == n and all(d["verdict"] and len(d["executed"]) == 5 for d in diag)
         frames += n + 1
@@ -94,7 +94,7 @@ def test_play_to_lance(tmp_path):
         d.mkdir(parents=True)
         for i in range(n + 1):
             cv2.imwrite(str(d / f"{i:04d}_top.jpg"), np.full((72, 128, 3), 40 * i, np.uint8))
-            cv2.imwrite(str(d / f"{i:04d}_base.jpg"), np.full((48, 64, 3), 40 * i, np.uint8))
+            cv2.imwrite(str(d / f"{i:04d}_base_rect.jpg"), np.full((48, 64, 3), 40 * i, np.uint8))
         if e < 2:
             np.savez(d.parent / "steps.npz", state=np.zeros((n + 1, 5), np.float32), action=np.ones((n, 5), np.float32))
     spec = importlib.util.spec_from_file_location("p2l", Path(__file__).parents[1] / "scripts/data/play_to_lance.py")

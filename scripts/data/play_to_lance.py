@@ -5,7 +5,8 @@
 # stable-worldmodel = { path = "../../../stable-worldmodel" }
 # ///
 """Play sessions (scripts/data/collect_play.py) to a stable-worldmodel Lance dataset for training: per frame
-`pixels` (top camera, RGB), `pixels_base` (base camera as taken, fisheye, RGB), `state` (commanded pose) and
+`pixels` (top camera, RGB), `pixels_base` (base camera rectified, NNNN_base_rect.jpg, RGB; Kei, 2026-11-27),
+`state` (commanded pose) and
 `action` (the executed delta from that frame; NaN on an episode's last frame, as World.collect writes it). The
 diagnostics (diag.jsonl, states/, self-checks) stay behind (Kei, 2026-11-27). Frames are kept at full size; training
 resizes (scripts/train/lewm.py, img_size). Episodes without steps.npz (interrupted) are skipped.
@@ -33,7 +34,7 @@ def episodes(sessions, count):
             rgb = lambda f: cv2.cvtColor(cv2.imread(str(f)), cv2.COLOR_BGR2RGB)
             count[0], count[1] = count[0] + 1, count[1] + n
             yield dict(pixels=[rgb(ep / "frames" / f"{i:04d}_top.jpg") for i in range(n)],
-                       pixels_base=[rgb(ep / "frames" / f"{i:04d}_base.jpg") for i in range(n)],
+                       pixels_base=[rgb(ep / "frames" / f"{i:04d}_base_rect.jpg") for i in range(n)],
                        state=list(z["state"]),
                        action=list(z["action"]) + [np.full(5, np.nan, np.float32)])
 

@@ -10,8 +10,8 @@ from cloudgripper_wm.envs.cloudgripper_env import CloudGripperEnv
 from cloudgripper_wm.envs.constants import PLAY_MAX_DELTA
 from cloudgripper_wm.envs.filtered_wrapper import FilteredCloudGripperWrapper
 from cloudgripper_wm.envs.robot_pool import RobotPool
-from cloudgripper_wm.primitives import (NOTCH_PUSH_TRIES, PARK, PLAY_CARRY, PLAY_WEIGHTS, PUSH_CLEAR_MM, WIDE_OPEN, Primitives, _gap_mm,
-                                       _pan_handle, z_for_tip)
+from cloudgripper_wm.primitives import (NOTCH_PUSH_TRIES, OVER_ROPE_TIP_MM, PARK, PLAY_CARRY, PLAY_WEIGHTS, PUSH_CLEAR_MM, PUSH_TIP_MM,
+                                       WIDE_OPEN, Primitives, _gap_mm, _pan_handle, z_for_tip)
 
 
 def _obj(x, y, w_mm, h_mm, l_mm=None):
@@ -69,6 +69,19 @@ def test_push_and_give_up(prim):
     prim.log.clear()
     assert not prim.push("pan", (1, 0), 30)
     assert prim.log[-2] == ("push pan: down", True) and "given up" in prim.log[-1][0] and u._target_pos[2] == 1.0
+
+
+def test_push_over_the_rope(prim):
+    """The rope right behind the slot (play_1; Kei: pushing the slot should be possible): the tips come down over the
+    rope and meet the slot's solid end. Across the slot, where its notch is open at that height (a cube in it), they
+    stay low, would come down on the rope, and the push is refused."""
+    prim.scene.update(slot=_obj(0.45, 0.45, 25.5, 16, 15), rope=_rope((0.45 - 25 * cf.MM, 0.3), np.pi / 2, length_mm=60))
+    plan = prim._push_plan("slot", (1, 0), 15)
+    assert plan[3] == OVER_ROPE_TIP_MM and prim._push_fits("slot", plan)
+    assert prim.push("slot", (1, 0), 15) and ("push slot: push", False) in prim.log
+    prim.scene["rope"] = _rope((0.3, 0.45 - 21 * cf.MM), 0.0, length_mm=60)  # behind a long side
+    plan = prim._push_plan("slot", (0, 1), 15)
+    assert plan[3] == PUSH_TIP_MM and not prim._push_fits("slot", plan)
 
 
 def test_objects_against_the_frame(prim):

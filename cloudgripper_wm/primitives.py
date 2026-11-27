@@ -34,6 +34,9 @@ CENTRE = (0.44, 0.45)      # middle of cell 20's glass, robot x, y
 CENTRE_RADIUS = 0.15       # reset: objects farther than this (21 mm) from CENTRE are pushed back to it
 PUSH_TIP_MM = 3.0          # tip height while pushing an object that stands clear of the frame
 OVER_FRAME_TIP_MM = 8.6    # ... and when the push starts over the frame (6.25 mm): only objects 10 mm and taller
+OVER_ROPE_TIP_MM = 10.6    # ... and when it starts on the rope (8 mm, soft: CLEAR_MM + 0.6 over it): only objects 4 mm
+                           # taller, the slot (16 mm). play_1: the slot lay in the rope's bend, the rope or the pan under
+                           # every start (Kei, 2026-11-27: pushing the slot should be possible)
 APPROACH_MM = 10.0         # a push starts this far behind the object
 SLOT_DROP_MM = 3.0         # a cube is let go with the tips this far above the slot's top (its bottom 2.4 mm above;
                            # the filter wants CLEAR_MM between a held object's bottom and what is under it)
@@ -226,6 +229,13 @@ class Primitives:
                     print(f"push {name}: the frame is right behind it and it is too low to catch from over the frame: nothing done", flush=True)
                 return None
             tip = OVER_FRAME_TIP_MM
+        rope = self.env.states.get("rope") if name != "rope" else None
+        # the slot's notch is open on both long sides from 5 mm up (13.5 mm wide, a cube in it): up there only its ends,
+        # within 45 deg of its length, are solid wall
+        solid = name != "slot" or abs(np.cos(np.arctan2(d[1], d[0]) - _rect_angle(fp)[0])) >= np.cos(np.pi / 4)
+        if getattr(rope, "footprint_xy", None) is not None and s.height_mm >= OVER_ROPE_TIP_MM + 4 and solid and \
+                min(_gap_mm(f, rope.footprint_xy) for f in cf.finger_polys([*self._cmd(start, rot).values(), 0, rot, self.closed])) < PUSH_CLEAR_MM:
+            tip = max(tip, OVER_ROPE_TIP_MM)  # the tips come down over the rope and meet the object's wall
         (ax, bx), (ay, by) = self.u._x_range, self.u._y_range
         if not all(ax <= q["x"] <= bx and ay <= q["y"] <= by for q in (self._cmd(start, rot), self._cmd(end, rot))):
             if say:
@@ -235,13 +245,13 @@ class Primitives:
 
     def _push_fits(self, name: str, plan, say: bool = False) -> bool:
         """Does the filter allow the lowering behind `name` and the push itself, as the scene is now, with the tips
-        coming down PUSH_CLEAR_MM from every other object?"""
+        coming down PUSH_CLEAR_MM from every other object they could meet (not one they stay CLEAR_MM above)?"""
         rot, start, end, tip = plan
         over, z = [*self._cmd(start, rot).values(), 1.0, rot, self.closed], z_for_tip(tip)
         down = [*over[:2], z, rot, self.closed]
         why = ""
         for n, s in self.env.states.items():  # first: it is cheap, the filter's checks are not (~16 ms each)
-            if not why and n != name and getattr(s, "footprint_xy", None) is not None:
+            if not why and n != name and getattr(s, "footprint_xy", None) is not None and s.height_mm > tip - cf.CLEAR_MM:
                 g = min(_gap_mm(f, s.footprint_xy) for f in cf.finger_polys(down))
                 why = f"the tips would come down {g:.1f} mm from {n} (needs {PUSH_CLEAR_MM:.0f})" if g < PUSH_CLEAR_MM else ""
         for a, b in ((over, down), (down, [*self._cmd(end, rot).values(), z, rot, self.closed])):
