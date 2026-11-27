@@ -266,6 +266,22 @@ def test_rope_drag_near_the_frame(prim):
     assert labels.index("push slot: push") < next(i for i, l in enumerate(labels) if "over the rope" in l)
 
 
+def test_rope_held_after_closing_across_it(prim):
+    """play_1 episode 7: the filter's clamp test missed the rope (its mask breaks up under the fingers); the drag said
+    "nothing between the tips" and the closed gripper rose with the rope in it. Closed across the rope at the glass it
+    is held: the drag runs and lets go."""
+    prim.scene.update(rope=_rope((0.3, 0.45), 0.0, length_mm=60))
+    import cloudgripper_wm.collision_filter as filt
+    clamped = filt._clamped
+    filt._clamped = lambda *a: []  # the clamp test misses
+    try:
+        assert prim.rope_drag(0, (0.0, 0.03)) and prim.env.held == []
+    finally:
+        filt._clamped = clamped
+    labels = [l for l, _ in prim.log]
+    assert "rope drag: drag" in labels and labels.index("rope drag: drag") < labels.index("rope drag: let go")
+
+
 def test_rope_twist(prim):
     """Kei, 2026-11-27: clamp the rope and turn the gripper (the other way when the turn would leave the range), with or
     without a drag; the first grasp spot is ROPE_END_MM in from the end (thinner at the tip)."""

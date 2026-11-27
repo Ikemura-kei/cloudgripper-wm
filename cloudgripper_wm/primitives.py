@@ -539,7 +539,8 @@ class Primitives:
             self.u._gripper_range = rng0
         if ok and name not in self.env.held:  # closed on nothing
             self.surprise = f"grasp {name}: closed on nothing"
-            self.goto(f"grasp {name}: nothing between the tips, raising", z=1.0)
+            self._let_go(f"grasp {name}: nothing between the tips")  # open first: if the filter missed it, it stays down
+            self.goto(f"grasp {name}: nothing between the tips, raising", z=1.0)  # (play_1 episode 7: the rope came up)
             return False
         if not lift:
             return ok
@@ -812,8 +813,11 @@ class Primitives:
         ok = self._run("rope drag", [("up", dict(z=1.0)), ("open", dict(grip=self.open)), ("turn", dict(rot=rot)),
                                      (f"over the rope {k:.0f} mm from the end", self._cmd(p, rot)), ("down", dict(z=0.0)), ("close", dict(grip=self.closed))])
         if ok and "rope" not in self.env.held:
-            self.goto("rope drag: nothing between the tips, raising", z=1.0)
-            return False
+            # the filter's clamp test missed it: under the fingers the rope's mask breaks up and only its largest
+            # piece is kept. The tips were put across the rope and closed at the glass: it is held. play_1 episode 7:
+            # "nothing between the tips", the closed gripper rose with the rope in it and carried it into the next
+            # primitives
+            self.env.held = [*self.env.held, "rope"]
         r1 = rot + twist if 0.0 <= rot + twist <= 1.0 else rot - twist
         q = p + np.asarray(delta_xy, float)
         moves = [("drag + twist" if np.any(delta_xy) and twist else "twist" if twist else "drag", dict(**self._cmd(q, r1), rot=r1))]
