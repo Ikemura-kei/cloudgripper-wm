@@ -32,7 +32,7 @@ def prim():
     log, sent, step = [], [], env.step
     env.step = lambda a: (sent.append(np.array(a)), step(a))[1]  # every action that reaches the env
     p = Primitives(env, on_step=lambda label, blocked: log.append((label, blocked)))
-    p.scene, p.log = scene, log
+    p.scene, p.log, p.sent = scene, log, sent
     yield p
     assert sent and (np.abs(sent) <= np.array(PLAY_MAX_DELTA) + 1e-6).all()  # only delta actions within the step limits
     env.close()
@@ -248,7 +248,7 @@ def test_rope_drag_near_the_frame(prim):
     assert not prim.rope_drag(0, (0.0, 0.05)) and len(prim.log) == n
     # the slot on the glass side of a short rope, the frame on the other (play_1): no spot fits; towards the centre
     # the push would come down on the rope, along the rope it fits and frees it (Kei, 2026-11-27)
-    rope, slot = _rope((0.3, y0 + 22 * cf.MM), 0.0, length_mm=36), _obj(0.3 + 18 * cf.MM, y0 + 41.5 * cf.MM, 25.5, 16, 15)
+    rope, slot = _rope((0.3, y0 + 22 * cf.MM), 0.0, length_mm=50), _obj(0.3 + 25 * cf.MM, y0 + 41.5 * cf.MM, 25.5, 16, 15)
     prim.scene.update(rope=rope, slot=slot)
     assert isinstance(prim._rope_spot(0), list)
     n, d = prim._rope_room(prim._rope_spot(0), 0)
@@ -259,6 +259,23 @@ def test_rope_drag_near_the_frame(prim):
     assert prim.rope_drag(0, (0.0, 0.03))
     labels = [l for l, _ in prim.log]
     assert labels.index("push slot: push") < next(i for i, l in enumerate(labels) if "over the rope" in l)
+
+
+def test_rope_twist(prim):
+    """Kei, 2026-11-27: clamp the rope and turn the gripper (the other way when the turn would leave the range), with or
+    without a drag; the first grasp spot is ROPE_END_MM in from the end (thinner at the tip)."""
+    prim.scene.update(rope=_rope((0.3, 0.45), 0.0, length_mm=60))
+    prim.log.clear()
+    assert prim.rope_drag(0, (0.0, 0.0), twist=0.3) and prim.env.held == []
+    labels = [l for l, _ in prim.log]
+    assert "rope drag: twist" in labels and any("20 mm from the end" in l for l in labels), labels
+    turned = [p for p in prim.sent if p[3] != 0]  # the twist's steps turn while the tips are down
+    assert turned
+    for together, want in ((True, ["rope drag: drag + twist"]), (False, ["rope drag: drag", "rope drag: twist"])):
+        prim.log.clear()
+        assert prim.rope_drag(1, (0.0, 0.03), twist=0.2, together=together)
+        labels = [l for l, _ in prim.log]
+        assert all(w in labels for w in want) and (together or "rope drag: drag + twist" not in labels), labels
 
 
 def test_slot_is_carried_across_its_width(prim):

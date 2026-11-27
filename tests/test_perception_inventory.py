@@ -133,3 +133,14 @@ def test_cube_in_the_notch_hidden_from_above_stays():
     assert s3.status == "stacked" and s3.in_notch and s3.inferred_xy[1] > s0.inferred_xy[1] + 0.05  # 60 px on
     tr.base.masks["slot"] = np.zeros((480, 640), bool)  # the slot not seen either: nothing is assumed
     assert tr._update()["cube_blue"].status == "unaccounted"
+
+
+def test_handoff_updates_only_after_a_prompt():
+    """play_1 episode 6: _handoff ended every step with a second status update of the same pictures, which believed a
+    notch cube the first update had doubted; the slot grew by a cube and a push was refused."""
+    tr = st.SceneTracker.__new__(st.SceneTracker)
+    tr.states = {n: st.ObjectState(n, "on_glass") for n in st.INVENTORY}
+    calls = []
+    tr._update = lambda: calls.append(1)
+    tr._handoff(None)
+    assert calls == []

@@ -359,10 +359,12 @@ class SceneTracker:
         """A cube seen only in the top view and touching no other object has probably dropped onto the glass: prompt
         the base view where the top view says it is, and keep the result only if it looks like that cube. This is the
         fast path between two refresh() calls; untested on real drops before 2026-11-23's live run."""
+        prompted = False
         for name, s in self.states.items():
             if s.status != "off_glass" or not name.startswith("cube") or self.base.n - self._tried.get(name, -99) < 5:
                 continue
             self._tried[name] = self.base.n
+            prompted = True
             ys, xs = np.nonzero(s.mask_top)
             px, py = cv2.perspectiveTransform(np.float32([[[xs.mean(), ys.mean()]]]), np.linalg.inv(self.H))[0, 0]
             if not (self.x0 <= px < self.x1 and self.y0 <= py < self.y1):
@@ -377,7 +379,8 @@ class SceneTracker:
                 ok = assign_inventory([dict(short=sh, long=lo, solidity=so, pieces=pieces, hsv=hsv)], {name}) == {name: 0}
             if not ok:
                 self.base.remove(name)
-        self._update()
+        if prompted:  # only then: a second update of the same pictures would believe a doubted notch cube (play_1 episode 6)
+            self._update()
 
     # ------------------------------------------------------------------ detection at a parking pose
     @contextlib.contextmanager

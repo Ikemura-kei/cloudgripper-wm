@@ -46,6 +46,8 @@ WIDE_OPEN = 1.0            # widest gripper command: 29.7 mm between tip centres
 PAN_HANDLE_MM = (15.5, 13.0, 11.0)  # centre of the pan's round part to where the handle is held, tried in this order; Pan.stl: handle from 10 to 21 mm out
 ROOM_MM, ROOM_PUSH_MM = 8.0, 25.0  # clutter: push length, and the room around the object it must leave (a tip is 5 mm)
 ROPE_STEP_MM = 8.0  # rope drag: grasp points tried every this far along the rope, from the end inwards
+ROPE_END_MM = 20.0  # ... starting this far in from either end (Kei, 2026-11-27: thinner at the tip; was 12)
+PLAY_TWIST = (0.15, 0.4)  # play rope twist: the gripper turned this much (27 to 72 deg) while it clamps the rope
 SLOT_TOP_MM, SLOT_FLOOR_MM = 16.0, 5.0  # Slot.stl (stored upside down): walls' top, notch floor; the notch is 13.5 mm
                            # wide and 11 mm deep, so a seated cube's top (15 mm) is below the walls
 # Cube out of slot by pushing: the height command for the open tip in the notch (cube from 5 to 15 mm, floor 5 mm).
@@ -454,7 +456,9 @@ class Primitives:
         end = int(rng.integers(2))
         spot = self._rope_spot(end) if on("rope") else []
         if on("rope") and (not isinstance(spot, list) or self._rope_room(spot, end)):  # a spot fits, or a push makes one
-            cand["rope_drag"].append((end, tuple(float(v) for v in unit(rng.uniform(0, 2 * np.pi)) * rng.uniform(*PLAY_DRAG_MM) * cf.MM)))
+            mode = int(rng.integers(3))  # drag, twist or both, both in one move or one after the other (Kei, 2026-11-27)
+            drag = unit(rng.uniform(0, 2 * np.pi)) * rng.uniform(*PLAY_DRAG_MM) * cf.MM if mode != 1 else np.zeros(2)
+            cand["rope_drag"].append((end, tuple(float(v) for v in drag), float(rng.uniform(*PLAY_TWIST)) if mode else 0.0, bool(rng.integers(2))))
         # the object first, evenly among those with a candidate, then one of its candidates by PLAY_WEIGHTS (Kei,
         # 2026-11-27: with the kind first, play_1 episode 5 moved only the white cube, the one carried object)
         pool = [(k, a) for k in PLAY_WEIGHTS for a in cand[k]]
@@ -748,7 +752,7 @@ class Primitives:
         fp = np.asarray(states["rope"].footprint_xy)
         length_mm = np.linalg.norm(fp[:, None] - fp[None], axis=2).max() / cf.MM
         reasons = []
-        for k in np.arange(12.0, length_mm - 11, ROPE_STEP_MM):
+        for k in np.arange(ROPE_END_MM, length_mm - ROPE_END_MM + 1, ROPE_STEP_MM):
             p, along = self._rope_ends(k)[end]
             rot = ((along + np.pi / 2) % np.pi) / np.pi
             over = [*self._cmd(p, rot).values(), 1.0, rot, self.open]
@@ -783,10 +787,12 @@ class Primitives:
                     return n, tuple(float(v) for v in d)
         return None
 
-    def rope_drag(self, end: int, delta_xy) -> bool:
-        """Grasp the rope near end 0 or 1 (tips across the rope), drag it by delta_xy at the glass, let go. The grasp
-        point is the first one, from 12 mm in and then every ROPE_STEP_MM along the whole rope, where the filter lets
-        the open tips go down (a rope lying along the frame is taken where it leaves it); none: nothing is done."""
+    def rope_drag(self, end: int, delta_xy, twist: float = 0.0, together: bool = True) -> bool:
+        """Grasp the rope near end 0 or 1 (tips across the rope), drag it by delta_xy at the glass and/or turn the
+        gripper by `twist` (rotation command, 1 = 180 deg; the other way if that leaves the range), both in one move or,
+        `together=False`, the drag first (Kei, 2026-11-27), let go. The grasp point is the first one, from ROPE_END_MM in and then every ROPE_STEP_MM along the whole rope,
+        where the filter lets the open tips go down (a rope lying along the frame is taken where it leaves it); none:
+        nothing is done."""
         if self._on_glass("rope") is None:
             return False
         spot = self._rope_spot(end)
@@ -805,7 +811,12 @@ class Primitives:
         if ok and "rope" not in self.env.held:
             self.goto("rope drag: nothing between the tips, raising", z=1.0)
             return False
-        return ok and self._run("rope drag", [("drag", self._cmd(p + np.asarray(delta_xy, float), rot))]) \
+        r1 = rot + twist if 0.0 <= rot + twist <= 1.0 else rot - twist
+        q = p + np.asarray(delta_xy, float)
+        moves = [("drag + twist" if np.any(delta_xy) and twist else "twist" if twist else "drag", dict(**self._cmd(q, r1), rot=r1))]
+        if np.any(delta_xy) and twist and not together:
+            moves = [("drag", self._cmd(q, rot)), ("twist", dict(**self._cmd(q, r1), rot=r1))]
+        return ok and self._run("rope drag", moves) \
             and self._let_go("rope drag") and self.goto("rope drag: up", z=1.0)
 
 

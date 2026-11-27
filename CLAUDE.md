@@ -773,8 +773,11 @@ the time, never into a height change. Larger steps than `PLAY_MAX_DELTA` need th
   45 deg of its length: across it, the notch is open from 5 mm up and holds a cube). Otherwise the push goes through
   the rope (Kei, 2026-11-27): the tips come down low behind the rope's far edge and push the rope into the object.
   play_1: the slot lay in the rope's bend with the pan against it, and every low start was on the rope or the pan.
-- `rope_drag` grasps the rope across it at the first spot, from 12 mm in from the end and then every 8 mm along the
-  whole rope, where the filter lets the open tips go down: a rope lying along the frame is taken where it leaves it.
+- `rope_drag(end, delta, twist=0, together=True)` grasps the rope across it at the first spot, from `ROPE_END_MM`
+  (20 mm; Kei: thinner at the tip, was 12) in from the end and then every 8 mm along the whole rope, where the filter
+  lets the open tips go down: a rope lying along the frame is taken where it leaves it. It drags and/or twists (turns
+  the gripper while it clamps the rope, Kei 2026-11-27), both in one move or one after the other; play draws drag,
+  twist or both, and together or not, at random.
   No spot: a 25 mm push of the object most often under the tips, in the first of eight directions (towards the
   centre first) that fits and leaves a spot with its outline moved (Kei, 2026-11-27: the slot beside the rope in
   play_1). In play_1's end layouts the slot is pushed 25 mm about along its length, from over the rope.
