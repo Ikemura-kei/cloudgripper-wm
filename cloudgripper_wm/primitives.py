@@ -356,9 +356,10 @@ class Primitives:
 
     def grasp(self, name: str, make_room: bool = True, along_mm: float | None = None, lift: bool = True) -> bool:
         """Open, go down around `name`, close, lift. A cube is taken with the tips along one of its sides, the pan
-        by its handle (8 mm wide), or by its round part (20 mm) with the gripper opened to WIDE_OPEN (24.7 mm between
-        the tips; 22.5 at the usual open is too little) when no handle spot fits, as with the handle at the frame
-        (Kei, 2026-11-27; prim_26). `lift=False`: stop once it is clamped, at the bottom (`slide`)."""
+        by its handle (8 mm wide). `lift=False`: stop once it is clamped, at the bottom (`slide`); the pan may then
+        also be clamped by its round part (20 mm) with the gripper opened to WIDE_OPEN (24.7 mm between the tips; 22.5
+        at the usual open is too little) when no handle spot fits, as with the handle at the frame (Kei, 2026-11-27;
+        prim_26). It does not lift that way (prim_27: rose 5 px), so a lifting grasp never takes it."""
         s = self._on_glass(name)
         if s is None:
             return False
@@ -369,9 +370,10 @@ class Primitives:
             # (no handle seen: round part only, every direction)
             a = 0.0 if u is None else np.arctan2(u[1], u[0])
             spots = [] if u is None else [(disc + u * k * cf.MM, a + np.pi / 2) for k in PAN_HANDLE_MM]
-            # round part: a fan of directions off the handle (along it, a tip lands on the handle); the filter picks
+            # round part, for a clamp only (it does not lift, prim_27): a fan of directions off the handle (along it,
+            # a tip lands on the handle); the filter picks
             fan = [1 / 2, 3 / 8, -3 / 8, 1 / 4, -1 / 4, 1 / 8, -1 / 8] + ([] if u is not None else [0])
-            spots += [(disc, a + t, WIDE_OPEN) for t in np.pi * np.array(fan)]
+            spots += [] if lift else [(disc, a + t, WIDE_OPEN) for t in np.pi * np.array(fan)]
         elif name == "slot":  # across its 15 mm width, on one of its walls (the middle is only the 5 mm base under the notch)
             a = _rect_angle(s.footprint_xy)[0]
             spots = [(c + k * cf.MM * np.array([np.cos(a), np.sin(a)]), a + np.pi / 2)

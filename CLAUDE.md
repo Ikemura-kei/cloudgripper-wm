@@ -735,9 +735,10 @@ picks the next one. Written for cell 20; heights, approach distance and waiting 
   near it, and a slot with its long side against the low-x or low-y frame, stay where they are (no grasp fits and
   the arm's range, 0.05 to 0.95, ends at the glass edge on the low sides, so nothing gets behind them).
 - `grasp` takes a cube by two sides, the slot across its 15 mm width on one of its walls and the pan by its handle (tried 15.5, 13 and 11 mm out from the round part's
-  centre). When no handle spot fits (handle at the frame, prim_26), the pan's 20 mm round part is taken with the gripper
-  opened to `WIDE_OPEN` 1.0 (24.7 mm between the tips; 22.5 at the usual 0.825), over a fan of directions the filter
-  picks from (Kei, 2026-11-27). Only that grasp widens the cell's range; play, reset and evaluation keep 0.825.
+  centre). A clamp (`grasp(lift=False)`, used by `slide`) may also take the pan's 20 mm round part when no handle spot
+  fits (handle at the frame, prim_26), with the gripper opened to `WIDE_OPEN` 1.0 (24.7 mm between the tips; 22.5 at
+  the usual 0.825), over a fan of directions the filter picks from (Kei, 2026-11-27); a lifting grasp never does (it
+  does not lift, prim_27). Only that clamp widens the cell's range; play, reset and evaluation keep 0.825.
   Tip spacing measured in the air 2026-11-27: 28.7 mm at 0.9, 29.7 mm at 1.0 (`GRIP_TO_SEP_MM`; the linkage flattens).
   On the robot the round part did not lift (prim_27: rose 5 px, the lift check let go), so `slide(name, direction,
   mm)` (Kei, 2026-11-27) clamps it where it lies and slides it along the glass; `reset_objects` slides a pan it can

@@ -147,17 +147,20 @@ def test_pan_is_carried_by_its_handle(prim):
 
 
 def test_pan_by_its_round_part(prim):
-    """Handle over the high-x frame (prim_26): no handle spot fits, so the round part is taken with the gripper opened
-    to WIDE_OPEN, and the cell's range is back to the usual open afterwards."""
+    """Handle over the high-x frame (prim_26): no handle spot fits. A lifting grasp gives up without moving (the round
+    part does not lift, prim_27); a clamp takes the round part with the gripper opened to WIDE_OPEN, and the cell's
+    range is back to the usual open afterwards."""
     x1, u = cf.GLASS[2], prim.env.unwrapped
     prim.scene.update(pan=_pan(x1 - (15 - 3.4) * cf.MM, 0.5))  # round part's centre 15 mm from the frame
+    prim.goto("test: start", x=0.4)
+    before = u._target_pos.copy()
+    assert not prim.grasp("pan", make_room=False) and np.allclose(u._target_pos, before)
     grips, step = [], prim.env.step
     prim.env.step = lambda a: (grips.append(float(u._target_pos[4] + a[4])), step(a))[1]
-    assert prim.grasp("pan") and prim.env.held == ["pan"]
+    assert prim.grasp("pan", lift=False) and prim.env.held == ["pan"] and u._target_pos[2] == 0.0
     tips = np.concatenate(cf.finger_polys(u._target_pos)).mean(0)
     assert abs(max(grips) - WIDE_OPEN) < 1e-6 and np.linalg.norm(tips - (x1 - 15 * cf.MM, 0.5)) < 1.5e-3
     assert tuple(u._gripper_range) == (prim.closed, prim.open) and prim.open < WIDE_OPEN
-    assert prim.place((0.45, 0.5)) and prim.env.held == []
 
 
 def _rope(p0, ang, length_mm=100, w_mm=8):
