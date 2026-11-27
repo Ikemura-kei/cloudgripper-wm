@@ -84,7 +84,9 @@ CELL20 = dict(
     GLASS=(0.043, 0.052, 0.842, 0.845),
     # Tip spacing (centre to centre) against the gripper command, from the tips' outer edges in base pictures at
     # z 0 (outputs/cloudgripper/robot20/scene1/fing_*): 14.2 mm outer to outer closed at 0.1, 32.3 mm open at 0.825.
-    GRIP_TO_SEP_MM=((0.1, 9.0), (0.825, 27.5)),
+    # Wider (2026-11-27, in the air, top view, as ratios to 0.825): 28.7 mm at 0.9, 29.7 mm at 1.0; the linkage flattens
+    # (a straight line through the first two would say 32 mm). np.interp clamps past the last point: keep it measured.
+    GRIP_TO_SEP_MM=((0.1, 9.0), (0.825, 27.5), (0.9, 28.7), (1.0, 29.7)),
     # ponytail: tip and finger body are the same yellow, so the inner edges may include body: the boxes may be up
     # to about 1 mm too deep along the axis and too wide across it, which is the cautious side
     FINGER_MM=(5.0, 10.5),

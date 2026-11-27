@@ -735,7 +735,10 @@ picks the next one. Written for cell 20; heights, approach distance and waiting 
   near it, and a slot with its long side against the low-x or low-y frame, stay where they are (no grasp fits and
   the arm's range, 0.05 to 0.95, ends at the glass edge on the low sides, so nothing gets behind them).
 - `grasp` takes a cube by two sides, the slot across its 15 mm width on one of its walls and the pan by its handle (tried 15.5, 13 and 11 mm out from the round part's
-  centre). The pan's round part is 20 mm and the open tips leave 22.5 mm: the filter refuses to lower around it.
+  centre). When no handle spot fits (handle at the frame, prim_26), the pan's 20 mm round part is taken with the gripper
+  opened to `WIDE_OPEN` 1.0 (24.7 mm between the tips; 22.5 at the usual 0.825), over a fan of directions the filter
+  picks from (Kei, 2026-11-27). Only that grasp widens the cell's range; play, reset and evaluation keep 0.825.
+  Tip spacing measured in the air 2026-11-27: 28.7 mm at 0.9, 29.7 mm at 1.0 (`GRIP_TO_SEP_MM`; the linkage flattens).
   When no spot has room for the tips, `_make_room` first pushes the object or a rigid neighbour 25 mm (every candidate
   push is asked of the filter before anything moves), then the grasp is tried once more.
 - A grasp closes, eases off by `RECLOSE_EASE` and closes again (a fresh command to a gripper stopped by a wide
@@ -757,6 +760,10 @@ picks the next one. Written for cell 20; heights, approach distance and waiting 
   problems: an object neither on the glass nor a cube in the slot's notch; a rigid object within `EDGE_MM` (10 mm,
   first guess) of the frame; the rope only when all of it is (Kei: any part well inside can be dragged). The collection runs reset_objects once on problems, checks
   again, then stops for a person. Runs in primitives_check.py as `scene_check`. Not yet run on the robot.
+- `random_primitive(rng)` for play (Kei, 2026-11-27): the kind by `PLAY_WEIGHTS` (pick-and-place, cube into and out of
+  the slot 2; push, rope drag 1) among the kinds the scene allows, then a random candidate; pick-and-place carries the
+  cubes only (`PLAY_CARRY`) until the slot and pan grasps have run supervised; targets keep objects EDGE_MM + 5 mm
+  from the frame.
 - Not written yet: the rope into and out of the slot.
 - `tests/test_primitives.py` runs the sequences on the mock robot. `scripts/debug/primitives_check.py --out DIR
   reset push:pan:1,0:30 ...` is the supervised live run (window + video; `--mock` for a dry run).

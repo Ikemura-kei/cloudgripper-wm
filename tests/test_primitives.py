@@ -9,7 +9,7 @@ from cloudgripper_wm.envs.cloudgripper_env import CloudGripperEnv
 from cloudgripper_wm.envs.constants import PLAY_MAX_DELTA
 from cloudgripper_wm.envs.filtered_wrapper import FilteredCloudGripperWrapper
 from cloudgripper_wm.envs.robot_pool import RobotPool
-from cloudgripper_wm.primitives import NOTCH_PUSH_TRIES, PARK, Primitives, z_for_tip
+from cloudgripper_wm.primitives import NOTCH_PUSH_TRIES, PARK, PLAY_CARRY, PLAY_WEIGHTS, WIDE_OPEN, Primitives, z_for_tip
 
 
 def _obj(x, y, w_mm, h_mm, l_mm=None):
@@ -146,6 +146,20 @@ def test_pan_is_carried_by_its_handle(prim):
     assert prim.reset_objects() == {"pan": True} and any("grasp pan: close" in l for l, _ in prim.log)
 
 
+def test_pan_by_its_round_part(prim):
+    """Handle over the high-x frame (prim_26): no handle spot fits, so the round part is taken with the gripper opened
+    to WIDE_OPEN, and the cell's range is back to the usual open afterwards."""
+    x1, u = cf.GLASS[2], prim.env.unwrapped
+    prim.scene.update(pan=_pan(x1 - (15 - 3.4) * cf.MM, 0.5))  # round part's centre 15 mm from the frame
+    grips, step = [], prim.env.step
+    prim.env.step = lambda a: (grips.append(float(u._target_pos[4] + a[4])), step(a))[1]
+    assert prim.grasp("pan") and prim.env.held == ["pan"]
+    tips = np.concatenate(cf.finger_polys(u._target_pos)).mean(0)
+    assert abs(max(grips) - WIDE_OPEN) < 1e-6 and np.linalg.norm(tips - (x1 - 15 * cf.MM, 0.5)) < 1.5e-3
+    assert tuple(u._gripper_range) == (prim.closed, prim.open) and prim.open < WIDE_OPEN
+    assert prim.place((0.45, 0.5)) and prim.env.held == []
+
+
 def _rope(p0, ang, length_mm=100, w_mm=8):
     """A straight rope from p0 along ang: its outline as the tracker gives it (few points on the straight sides)."""
     d, n = np.array([np.cos(ang), np.sin(ang)]), np.array([-np.sin(ang), np.cos(ang)])
@@ -260,3 +274,24 @@ def test_scene_check(prim):
     assert prim.scene_check() == []
     prim.scene["rope"] = _obj(0.4, 0.06, 60, 8, 8)  # all of it along the frame
     assert [p.split(":")[0] for p in prim.scene_check()] == ["rope"]
+
+
+def test_random_primitive(prim):
+    """Kinds by PLAY_WEIGHTS among those the scene allows; targets keep clear of the frame."""
+    rng = np.random.default_rng(0)
+    prim.scene.update(cube_blue=_obj(0.4, 0.4, 15, 15), cube_white=_obj(0.5, 0.6, 15, 15), slot=_obj(0.6, 0.4, 15, 16, 25.5),
+                      pan=_obj(0.3, 0.6, 20, 7), rope=_obj(0.45, 0.25, 60, 8, 8))
+    assert prim.goto("test: a step", x=0.4)  # the fixture wants at least one step sent
+    picks = [prim.random_primitive(rng) for _ in range(400)]
+    kinds = {k: sum(p[0] == k for p in picks) for k in PLAY_WEIGHTS}
+    # cube into slot (weight 2) is always possible here; pick-and-place only when a free spot is drawn (FREE_MM)
+    assert kinds["cube_out_of_slot"] == 0 and kinds["cube_into_slot"] > 1.5 * kinds["rope_drag"] and kinds["pick_place"] > 0
+    x0, y0, x1, y1 = cf.GLASS
+    for k, a in picks:
+        if k == "pick_place":
+            assert a[0] in PLAY_CARRY and x0 + 0.1 < a[1][0] < x1 - 0.1 and y0 + 0.1 < a[1][1] < y1 - 0.1
+    prim.scene["cube_blue"] = SimpleNamespace(status="stacked", on="slot", in_notch=True, height_mm=15, inferred_xy=None)
+    picks = [prim.random_primitive(rng) for _ in range(200)]
+    assert ("cube_out_of_slot", ("cube_blue", "push")) in picks and not any(k == "cube_into_slot" for k, _ in picks)
+    prim.scene["pan"] = _obj(0.08, 0.6, 20, 7)  # by the frame: never pushed further towards it
+    assert not any(k == "push" and a[0] == "pan" and a[1][0] < 0 for k, a in (prim.random_primitive(rng) for _ in range(200)))
