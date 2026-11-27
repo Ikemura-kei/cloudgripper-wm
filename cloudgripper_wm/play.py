@@ -87,9 +87,9 @@ class Recorder:
 
 
 def collect(prim, rec: Recorder, out, episodes: int, rng, check=None, check_every: int = CHECK_EVERY) -> str:
-    """Run `episodes` play episodes into `out` (continuing the episode numbers already there). `check(prim, out)`
-    is the self-check (default `self_check.self_check`); it returns (status, lines). Returns "done" or the reason
-    it stopped."""
+    """Run `episodes` play episodes into `out` (continuing the episode numbers already there). `check(prim, out=DIR)`
+    is the self-check (default `self_check.self_check`, against the robot's reference in git; DIR keeps its
+    pictures and log); it returns (status, lines). Returns "done" or the reason it stopped."""
     if check is None:
         from cloudgripper_wm.self_check import self_check as check
     out = Path(out)
@@ -109,7 +109,7 @@ def collect(prim, rec: Recorder, out, episodes: int, rng, check=None, check_ever
     def self_checked(tag: str) -> bool:
         n = len(list((out / "self_checks").glob("*_a"))) if (out / "self_checks").exists() else 0
         for attempt in "ab":
-            status, lines = check(prim, out / "self_checks" / f"{n:03d}_{attempt}")
+            status, lines = check(prim, out=out / "self_checks" / f"{n:03d}_{attempt}")  # by name: the 2nd parameter is the reference
             log("self_check", tag=tag, attempt=attempt, status=status, report=lines)
             if status == "pass":
                 return True

@@ -43,7 +43,11 @@ def setup(tmp_path):
 def test_collect(setup):
     prim, rec, scene, out = setup
     calls = []
-    check = lambda p, d: (Path(d).mkdir(parents=True), calls.append(Path(d).name), ("pass", ["ok"]))[-1]  # as self_check: its folder
+    def check(p, ref=None, out=None, record=False):  # self_check's signature: a folder passed as `ref` would be a bug
+        assert ref is None and out is not None
+        Path(out).mkdir(parents=True)
+        calls.append(Path(out).name)
+        return "pass", ["ok"]
     assert collect(prim, rec, out, 2, np.random.default_rng(1), check=check) == "done" and calls == ["000_a"]
     eps = sorted((out / "episodes").glob("ep_*"))
     assert [e.name for e in eps] == ["ep_00000", "ep_00001"]
@@ -67,7 +71,7 @@ def test_collect(setup):
     calls.clear()
     assert collect(prim, rec, out, 2, np.random.default_rng(2), check=check) == "done" and calls == ["001_a", "002_a"]
     # a self-check that fails twice stops, arm up and gripper open
-    assert collect(prim, rec, out, 1, np.random.default_rng(3), check=lambda p, d: ("fail", ["bad"])).startswith("self-check failed twice")
+    assert collect(prim, rec, out, 1, np.random.default_rng(3), check=lambda p, ref=None, out=None: ("fail", ["bad"])).startswith("self-check failed twice")
     assert prim.u._target_pos[2] == 1.0 and np.isclose(prim.u._target_pos[4], prim.open)
     # a scene the reset cannot fix stops before the episode
     scene["pan"] = SimpleNamespace(status="unaccounted", on=None, height_mm=7, inferred_xy=None, footprint_xy=None)
@@ -95,3 +99,13 @@ def test_play_to_lance(tmp_path):
     import lance
     t = lance.dataset(str(tmp_path / "train.lance")).to_table()
     assert t.num_rows == 4 + 3 and {"pixels", "pixels_base", "state", "action"} <= set(t.column_names)
+
+
+def test_collect_uses_the_real_self_check_signature(setup, monkeypatch):
+    """The default check is self_check.self_check: called with the output folder by name, against the reference in git."""
+    prim, rec, scene, out = setup
+    import cloudgripper_wm.self_check as sc
+    seen = {}
+    monkeypatch.setattr(sc, "self_check", lambda p, ref=None, out=None, record=False: (seen.update(ref=ref, out=out), ("fail", ["x"]))[1])
+    collect(prim, rec, out, 1, np.random.default_rng(0))
+    assert seen["ref"] is None and str(seen["out"]).endswith("self_checks/000_b")
