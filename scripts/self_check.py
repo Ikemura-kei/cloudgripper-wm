@@ -13,8 +13,10 @@ MOVES THE ROBOT, through the collision filter, never below height 0.35.
 The reference is cloudgripper_wm/self_check_ref/<robot> unless --ref names another directory.
 
 Exit status: 0 pass (or recorded), 1 fail, 2 a move was blocked by the filter (the scene is in the way, not a robot
-fault). The window shows every move as primitives_check.py does; DIR gets check.mp4 and, for a check, one picture per
-pose: top and base view, reference-only masks magenta, this check's cyan, both white; "_FAIL" where the pose failed."""
+fault). The window shows every move as primitives_check.py does. DIR keeps everything for diagnosis: check.mp4,
+blocked.jsonl, scene_start.npz (the tracker's states with masks), raw/ (every picture, retakes included), log.jsonl
+(one line per picture with the numbers), one overlay per pose (reference-only masks magenta, this check's cyan, both
+white; "_FAIL" where the pose failed) and report.txt."""
 import argparse
 import sys
 import warnings

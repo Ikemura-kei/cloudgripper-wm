@@ -776,5 +776,8 @@ counts: a false alarm stops the collection and is worse than a missed fault (Kei
 0.001); motor currents are not used (Kei: never used).
 The reference is `cloudgripper_wm/self_check_ref/<robot>/`, committed to git (Kei: safe from accidental deletion);
 `--record` adds the poses it lacks and never replaces one.
-`scripts/self_check.py --out DIR [--record] [--ref DIR]` runs it (exit 0 pass, 1 fail, 2 blocked by the scene);
+`scripts/self_check.py --out DIR [--record] [--ref DIR]` runs it (exit 0 pass, 1 fail, 2 blocked by the scene); DIR
+keeps everything for diagnosis (Kei): scene_start.npz (tracker states with masks, `scene_tracker.save_states` /
+`load_states`, ~10 KB a scene), raw/ (every picture, retakes included), log.jsonl (numbers per picture), overlays,
+report.txt;
 `tests/test_self_check.py`. robot20: top-height poses recorded and checked once (2026-11-27); height poses not yet.

@@ -1,4 +1,5 @@
 """Self-check (cloudgripper_wm/self_check.py): the measures on drawn pictures, then record and check on the mock robot."""
+import json
 from types import SimpleNamespace
 
 import cv2
@@ -10,6 +11,7 @@ from cloudgripper_wm.envs.cloudgripper_env import CloudGripperEnv
 from cloudgripper_wm.envs.constants import PLAY_MAX_DELTA
 from cloudgripper_wm.envs.filtered_wrapper import FilteredCloudGripperWrapper
 from cloudgripper_wm.envs.robot_pool import RobotPool
+from cloudgripper_wm.perception.scene_tracker import load_states, save_states
 from cloudgripper_wm.primitives import Primitives
 from cloudgripper_wm.self_check import FRAME_SHIFT_PX, LOW_Z, NEAR_MIN, NEAR_PX, R, TILT_DEG, _frame, _measure, _near, _shift, self_check
 
@@ -80,7 +82,11 @@ def test_record_then_check(prim, tmp_path):
     prim.look["pics"] = _pics
     status, lines = self_check(prim, ref, out=tmp_path / "out")
     assert status == "pass", "\n".join(lines)
-    assert len(list((tmp_path / "out").glob("*.jpg"))) == 13 and any(l.startswith("down_open") for l in lines)
+    o = tmp_path / "out"
+    assert len(list(o.glob("*.jpg"))) == 13 and any(l.startswith("down_open") for l in lines)
+    log = [json.loads(l) for l in (o / "log.jsonl").read_text().splitlines()]
+    assert len(log) == 13 and len(list((o / "raw").glob("*.jpg"))) == 26 and log[3]["label"] == "x+" and log[3]["claw"] == 1.0
+    assert (o / "scene_start.npz").exists() and "PASS" in (o / "report.txt").read_text()
     assert prim.u._target_pos[2] == 1.0  # ends at the top height
 
     prim.look["pics"] = lambda: _pics(tilt=30)  # the gripper hangs tilted
@@ -97,8 +103,10 @@ def test_record_then_check(prim, tmp_path):
     prim.look["pics"] = _pics  # one bad picture at x+ (a glitch): pictured again, and the check passes
     goto = prim.goto
     prim.goto = lambda label, *a, **k: (goto(label, *a, **k), prim.look.update(glitch=label.endswith("x+")))[0]
-    status, lines = self_check(prim, ref)
+    status, lines = self_check(prim, ref, out=tmp_path / "out2")
     assert status == "pass" and any(l.startswith("x+") and "pictured 2 times" in l for l in lines), "\n".join(lines)
+    log = [json.loads(l) for l in (tmp_path / "out2/log.jsonl").read_text().splitlines()]
+    assert [(d["take"], bool(d["bad"])) for d in log if d["label"] == "x+"] == [(0, True), (1, False)]  # both kept
     prim.goto = goto
 
     prim.look["pics"] = _pics
@@ -109,3 +117,12 @@ def test_record_then_check(prim, tmp_path):
     status, lines = self_check(prim, ref)
     assert status == "pass" and "height not checked" in lines[0] and not any(l.startswith("down_") for l in lines), "\n".join(lines)
     assert self_check(prim, tmp_path / "ref2", record=True)[0] == "blocked"  # a reference is recorded whole
+
+
+def test_states_roundtrip(tmp_path):
+    m = np.zeros((480, 640), bool); m[100:150, 200:260] = True
+    s = SimpleNamespace(name="cube_blue", status="on_glass", xy=(0.4, 0.5), footprint_xy=np.ones((4, 2)), mask_base=m, mask_top=None)
+    save_states(tmp_path / "s.npz", {"cube_blue": s})
+    back = load_states(tmp_path / "s.npz")["cube_blue"]
+    assert (back["mask_base"] == m).all() and back["footprint_xy"] == [[1.0, 1.0]] * 4 and back["status"] == "on_glass"
+    assert (tmp_path / "s.npz").stat().st_size < 2000

@@ -15,6 +15,7 @@ inventory name to an ObjectState.
 from __future__ import annotations
 
 import contextlib
+import json
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -100,6 +101,32 @@ class ObjectState:
     in_notch: bool = False  # stacked on the slot and, in the top view, inside the slot's outline: in its notch
     mask_base: np.ndarray | None = None  # bool (480, 640), None if never prompted in this view
     mask_top: np.ndarray | None = None  # bool (720, 1280)
+
+
+def save_states(path, states: dict) -> None:
+    """Tracker states to one .npz for diagnosis (not training data, Kei 2026-11-27): each object's fields as JSON, its
+    masks bit-packed. A step of five objects is ~10 KB. `load_states` reads it back."""
+    meta, arrays = {}, {}
+    for n, s in states.items():
+        d = dict(vars(s))
+        for v in ("mask_base", "mask_top"):
+            m = d.pop(v, None)
+            if m is not None:
+                arrays[f"{n}.{v}"], d[f"{v}_shape"] = np.packbits(m), m.shape
+        meta[n] = d
+    np.savez_compressed(path, meta=json.dumps(meta, default=lambda o: o.tolist() if hasattr(o, "tolist") else str(o)), **arrays)
+
+
+def load_states(path) -> dict[str, dict]:
+    """{name: fields as saved, masks as bool arrays} from `save_states`."""
+    z = np.load(path)
+    out = json.loads(str(z["meta"]))
+    for n, d in out.items():
+        for v in ("mask_base", "mask_top"):
+            if f"{n}.{v}" in z:
+                shape = d[f"{v}_shape"]
+                d[v] = np.unpackbits(z[f"{n}.{v}"])[:shape[0] * shape[1]].reshape(shape).astype(bool)
+    return out
 
 
 def one_piece(mask: np.ndarray, max_px: int) -> np.ndarray:

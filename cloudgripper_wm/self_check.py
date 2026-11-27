@@ -139,67 +139,94 @@ def _overlay(img, cur, ref) -> np.ndarray:
     return o
 
 
-def _judge(label, top, base, prev, ref: Path, state, cmd) -> tuple[list[str], str, dict, dict]:
-    """(what is wrong, report line, this pose's masks, the reference's) for one pose."""
+def _judge(label, top, base, prev, ref: Path) -> tuple[list[str], dict, dict, dict]:
+    """(what is wrong, the numbers, this pose's masks, the reference's) for one picture pair."""
     m, r = _measure(top, base), _measure(cv2.imread(str(ref / f"{label}_top.jpg")), cv2.imread(str(ref / f"{label}_base.jpg")))
-    near = {key: _near(m[key], r[key], NEAR_PX) for key in ("block", "claw", "base")}
-    shift = _shift(r["frame"], m["frame"])
-    bad = [f"{key} {v:.3f} < {BASE_MIN if key == 'base' else NEAR_MIN}" for key, v in near.items() if v < (BASE_MIN if key == "base" else NEAR_MIN)]
-    if not shift <= FRAME_SHIFT_PX:
-        bad.append(f"base camera moved: frame {shift:.1f} px off")
+    nums = {key: _near(m[key], r[key], NEAR_PX) for key in ("block", "claw", "base")}
+    nums |= dict(frame_px=_shift(r["frame"], m["frame"]), tilt=m["tilt"], ref_tilt=r["tilt"])
+    bad = [f"{key} {nums[key]:.3f} < {BASE_MIN if key == 'base' else NEAR_MIN}" for key in ("block", "claw", "base")
+           if nums[key] < (BASE_MIN if key == "base" else NEAR_MIN)]
+    if not nums["frame_px"] <= FRAME_SHIFT_PX:
+        bad.append(f"base camera moved: frame {nums['frame_px']:.1f} px off")
     if not abs(m["tilt"] - r["tilt"]) <= TILT_DEG:  # nan (no block seen) fails too
         bad.append(f"block edge at {m['tilt']:+.1f} deg, reference {r['tilt']:+.1f}")
     if prev is not None and (np.array_equal(top, prev[0]) or np.array_equal(base, prev[1])):
         bad.append("same picture as the pose before (camera frozen or fetch failed)")
-    line = (f"{label:12s} " + "  ".join(f"{key} {v:.3f}" for key, v in near.items()) + f"  frame {shift:.1f} px"
-            + f"  tilt {m['tilt']:+.1f} (ref {r['tilt']:+.1f})" + _reported(state, cmd))
-    return bad, line, m, r
+    return bad, nums, m, r
 
 
 def self_check(prim, ref=None, out=None, record: bool = False) -> tuple[str, list[str]]:
     """Run the check with `prim` (Primitives on a FilteredCloudGripperWrapper after reset). Returns the status,
     "pass" | "fail" | "blocked" (the filter stopped a move: the scene, not the robot) | "recorded", and report lines.
     `record`: add this run's poses that `ref` (default REF_DIR/<robot>) lacks; healthy robot only. Otherwise compare
-    with `ref`, and write one picture per pose to `out` (top and base, masks against the reference's)."""
-    u = prim.u
+    with `ref`.
+
+    `out` keeps everything for diagnosis (Kei, 2026-11-27): scene_start.npz (the tracker's states with their masks,
+    `save_states`), raw/ (every picture taken, retakes included, full size), log.jsonl (one line per picture: pose,
+    take, command, reported state, the numbers, what was wrong), one overlay per pose (top and base, reference-only
+    masks magenta, this check's cyan, both white; "_FAIL" where the pose failed) and report.txt."""
     ref = Path(ref) if ref else REF_DIR / prim.env._name
+    if out:
+        out = Path(out)
+        (out / "raw").mkdir(parents=True, exist_ok=True)
+        from cloudgripper_wm.perception.scene_tracker import save_states  # here: the module loads torch
+        save_states(out / "scene_start.npz", prim.env.states)
+    status, lines = _run(prim, ref, out, record)
+    if out:
+        (out / "report.txt").write_text("\n".join(lines + [f"== self-check: {status.upper()}"]) + "\n")
+    return status, lines
+
+
+def _run(prim, ref: Path, out, record: bool) -> tuple[str, list[str]]:
+    u = prim.u
     low = _free_below(prim)
     if record and not low:
         return "blocked", [f"something tall under the gripper at {C}: clear it, then record"]
     lines = [] if low else [f"height not checked: something tall under the gripper at {C}"]
-    if out:
-        Path(out).mkdir(parents=True, exist_ok=True)
+    log = open(out / "log.jsonl", "a") if out else None
     recs, fails, prev = [], [], None
-    for k, (label, *cmd) in enumerate(_plan(prim, low)):
-        if not prim.goto(f"self-check: {label}", *cmd):
-            prim._give_up("self-check")
-            return "blocked", lines + [f"the filter blocked '{label}': the scene is in the way, not a robot fault"]
-        m = r = None
-        for take in range(RETAKES + 1):
-            if take:
-                time.sleep(RETAKE_S * wait_scale(u))
-            top, base, _ = u._observe()
-            base = cv2.cvtColor(base, cv2.COLOR_RGB2BGR)
-            state, _ = (u.robot.get_state_ws if u.use_ws else u.robot.get_state)()
+    try:
+        for k, (label, *cmd) in enumerate(_plan(prim, low)):
+            if not prim.goto(f"self-check: {label}", *cmd):
+                prim._give_up("self-check")
+                return "blocked", lines + [f"the filter blocked '{label}': the scene is in the way, not a robot fault"]
+            m = None
+            for take in range(RETAKES + 1):
+                if take:
+                    time.sleep(RETAKE_S * wait_scale(u))
+                top, base, _ = u._observe()
+                base = cv2.cvtColor(base, cv2.COLOR_RGB2BGR)
+                state, _ = (u.robot.get_state_ws if u.use_ws else u.robot.get_state)()
+                bad, nums = [], {}
+                if not record and not (ref / f"{label}_top.jpg").exists():
+                    bad = [f"not in the reference {ref} (record it)"]
+                elif not record:
+                    bad, nums, m, r = _judge(label, top, base, prev, ref)
+                if out:
+                    cv2.imwrite(str(out / "raw" / f"{k:02d}_{label}_{take}_top.jpg"), top)
+                    cv2.imwrite(str(out / "raw" / f"{k:02d}_{label}_{take}_base.jpg"), base)
+                    log.write(json.dumps(dict(pose=k, label=label, take=take, t=time.time(), cmd=cmd, state=state, **nums, bad=bad),
+                                         default=float) + "\n")
+                if record or not bad or m is None:
+                    break
+            prev = top, base
             if record:
-                break
-            if not (ref / f"{label}_top.jpg").exists():
-                bad, line = [f"not in the reference {ref} (record it)"], f"{label:12s} not in the reference"
-                break
-            bad, line, m, r = _judge(label, top, base, prev, ref, state, cmd)
-            if not bad:
-                break
-        prev = top, base
-        if record:
-            recs.append((label, cmd, top, base, state))
-            continue
-        lines.append(line + (f"  (pictured {take + 1} times)" if take else ""))
-        fails += [f"{label}: {b}" for b in bad]
-        if out and m is not None:
-            t, b = _overlay(top, m["block"] | m["claw"], r["block"] | r["claw"]), _overlay(base, m["base"] | m["frame"], r["base"] | r["frame"])
-            b = cv2.resize(b, (b.shape[1] * t.shape[0] // b.shape[0], t.shape[0]))
-            pic = cv2.resize(np.hstack([t, b]), None, fx=0.5, fy=0.5)
-            cv2.imwrite(str(Path(out) / f"{k:02d}_{label}{'_FAIL' if bad else ''}.jpg"), pic)
+                recs.append((label, cmd, top, base, state))
+                continue
+            if m is None:
+                lines.append(f"{label:12s} not in the reference")
+            else:
+                lines.append(f"{label:12s} " + "  ".join(f"{key} {nums[key]:.3f}" for key in ("block", "claw", "base"))
+                             + f"  frame {nums['frame_px']:.1f} px  tilt {nums['tilt']:+.1f} (ref {nums['ref_tilt']:+.1f})"
+                             + _reported(state, cmd) + (f"  (pictured {take + 1} times)" if take else ""))
+            fails += [f"{label}: {b}" for b in bad]
+            if out and m is not None:
+                t, b = _overlay(top, m["block"] | m["claw"], r["block"] | r["claw"]), _overlay(base, m["base"] | m["frame"], r["base"] | r["frame"])
+                b = cv2.resize(b, (b.shape[1] * t.shape[0] // b.shape[0], t.shape[0]))
+                cv2.imwrite(str(out / f"{k:02d}_{label}{'_FAIL' if bad else ''}.jpg"), cv2.resize(np.hstack([t, b]), None, fx=0.5, fy=0.5))
+    finally:
+        if log:
+            log.close()
     if not record:
         return ("fail" if fails else "pass"), lines + (["FAILED:", *fails] if fails else [])
     ref.mkdir(parents=True, exist_ok=True)
