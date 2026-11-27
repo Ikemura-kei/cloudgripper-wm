@@ -770,8 +770,9 @@ the time, never into a height change. Larger steps than `PLAY_MAX_DELTA` need th
   its height table put the tips 4.8 mm above the cube where Kei saw them touch it).
   When the rope lies where the tips come down, an object 4 mm taller than the rope is pushed from over it: tips at
   `OVER_ROPE_TIP_MM` (10.6, rope 8 mm + CLEAR_MM + 0.6), so in practice the slot, and only on its solid ends (within
-  45 deg of its length: across it, the notch is open from 5 mm up and holds a cube). Kei, 2026-11-27: the slot in
-  play_1 lay in the rope's bend with the pan against it, and every low start was on the rope or the pan.
+  45 deg of its length: across it, the notch is open from 5 mm up and holds a cube). Otherwise the push goes through
+  the rope (Kei, 2026-11-27): the tips come down low behind the rope's far edge and push the rope into the object.
+  play_1: the slot lay in the rope's bend with the pan against it, and every low start was on the rope or the pan.
 - `rope_drag` grasps the rope across it at the first spot, from 12 mm in from the end and then every 8 mm along the
   whole rope, where the filter lets the open tips go down: a rope lying along the frame is taken where it leaves it.
   No spot: a 25 mm push of the object most often under the tips, in the first of eight directions (towards the

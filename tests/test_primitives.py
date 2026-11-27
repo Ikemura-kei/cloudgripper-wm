@@ -74,14 +74,18 @@ def test_push_and_give_up(prim):
 def test_push_over_the_rope(prim):
     """The rope right behind the slot (play_1; Kei: pushing the slot should be possible): the tips come down over the
     rope and meet the slot's solid end. Across the slot, where its notch is open at that height (a cube in it), they
-    stay low, would come down on the rope, and the push is refused."""
+    come down low behind the rope and push it into the slot."""
     prim.scene.update(slot=_obj(0.45, 0.45, 25.5, 16, 15), rope=_rope((0.45 - 25 * cf.MM, 0.3), np.pi / 2, length_mm=60))
     plan = prim._push_plan("slot", (1, 0), 15)
     assert plan[3] == OVER_ROPE_TIP_MM and prim._push_fits("slot", plan)
     assert prim.push("slot", (1, 0), 15) and ("push slot: push", False) in prim.log
-    prim.scene["rope"] = _rope((0.3, 0.45 - 21 * cf.MM), 0.0, length_mm=60)  # behind a long side
+    # behind a long side: through the rope (Kei, 2026-11-27): the tips come down low behind its far edge and push it
+    # into the slot
+    prim.scene["rope"] = _rope((0.3, 0.45 - 21 * cf.MM), 0.0, length_mm=60)
     plan = prim._push_plan("slot", (0, 1), 15)
-    assert plan[3] == PUSH_TIP_MM and not prim._push_fits("slot", plan)
+    assert plan[3] == PUSH_TIP_MM and prim._push_fits("slot", plan)
+    down = [*prim._cmd(plan[1], plan[0]).values(), z_for_tip(plan[3]), plan[0], prim.closed]
+    assert max(f[:, 1].max() for f in cf.finger_polys(down)) < 0.45 - (25 + PUSH_CLEAR_MM) * cf.MM  # behind the rope
 
 
 def test_play_varies_steps_and_merges_top_moves(prim):

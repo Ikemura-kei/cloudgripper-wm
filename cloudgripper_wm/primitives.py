@@ -249,9 +249,26 @@ class Primitives:
         # the slot's notch is open on both long sides from 5 mm up (13.5 mm wide, a cube in it): up there only its ends,
         # within 45 deg of its length, are solid wall
         solid = name != "slot" or abs(np.cos(np.arctan2(d[1], d[0]) - _rect_angle(fp)[0])) >= np.cos(np.pi / 4)
-        if getattr(rope, "footprint_xy", None) is not None and s.height_mm >= OVER_ROPE_TIP_MM + 4 and solid and \
-                min(_gap_mm(f, rope.footprint_xy) for f in cf.finger_polys([*self._cmd(start, rot).values(), 0, rot, self.closed])) < PUSH_CLEAR_MM:
+        on_rope = getattr(rope, "footprint_xy", None) is not None and \
+            min(_gap_mm(f, rope.footprint_xy) for f in cf.finger_polys([*self._cmd(start, rot).values(), 0, rot, self.closed])) < PUSH_CLEAR_MM
+        if on_rope and s.height_mm >= OVER_ROPE_TIP_MM + 4 and solid:
             tip = max(tip, OVER_ROPE_TIP_MM)  # the tips come down over the rope and meet the object's wall
+        elif on_rope:
+            # through the rope (Kei, 2026-11-27): the tips come down behind the rope's far edge, low, and push the rope
+            # into the object. The rope's outline within the tips' width (+ PUSH_CLEAR_MM) of the push line counts
+            loop = np.vstack([rope.footprint_xy, rope.footprint_xy[:1]])
+            arc = np.r_[0, np.cumsum(np.linalg.norm(np.diff(loop, axis=0), axis=1))]
+            t = np.arange(0, arc[-1], cf.MM)
+            r = np.c_[np.interp(t, arc, loop[:, 0]), np.interp(t, arc, loop[:, 1])] - c  # every 1 mm
+            half = (cf.sep_mm(self.closed) / 2 + cf.FINGER_MM[0] + PUSH_CLEAR_MM) * cf.MM
+            band = r[np.abs(r @ np.array([-d[1], d[0]])) <= half]
+            back = max(back, float(-(band @ d).min(initial=np.inf)))  # how far the rope reaches behind the centre
+            start = next((p for p in (c - d * (back + (cf.FINGER_MM[1] / 2 + a) * cf.MM) for a in (APPROACH_MM, 6.0, 3.0)) if inside(p)), None)
+            if start is None:
+                if say:
+                    print(f"push {name}: the rope is behind it and no room behind the rope: nothing done", flush=True)
+                return None
+            tip = PUSH_TIP_MM
         (ax, bx), (ay, by) = self.u._x_range, self.u._y_range
         if not all(ax <= q["x"] <= bx and ay <= q["y"] <= by for q in (self._cmd(start, rot), self._cmd(end, rot))):
             if say:

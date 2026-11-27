@@ -129,6 +129,10 @@ the pan is good to about half a cube and its angle is not estimated; it is not a
   `HIDDEN_KEEP_PX` (12 px) of where it was when last seen from below (2026-11-26: otherwise a cube under the open tips
   became "off_glass", a 30 mm obstacle, and could not be grasped). A lifted or pushed object moves in the top view and
   is judged as usual.
+- A cube in the slot's notch is seen from the top camera only. When it vanishes there and is not seen from below, it
+  stays in the notch while the slot's base mask overlaps its last by `NOTCH_KEEP_IOU` (0.8) (play_1 episode 2,
+  2026-11-27: the arm over the slot hid it, it became "unaccounted" and the filter stopped a push of the slot). A cube
+  lifted out of the notch by a grasp also reads as still there until the top view sees it again.
 - A status changes only by what the masks show. `refresh` is what adds an object that newly appears on the glass
   (a cube that fell off the pan); between refreshes such a cube stays `stacked` or becomes `unaccounted`.
 
