@@ -777,7 +777,14 @@ the time, never into a height change. Larger steps than `PLAY_MAX_DELTA` need th
   (20 mm; Kei: thinner at the tip, was 12) in from the end and then every 8 mm along the whole rope, where the filter
   lets the open tips go down: a rope lying along the frame is taken where it leaves it. It drags and/or twists (turns
   the gripper while it clamps the rope, Kei 2026-11-27), both in one move or one after the other; play draws drag,
-  twist or both, and together or not, at random.
+  twist or both, and together or not, at random. The gripper opens only to `ROPE_OPEN` (0.45, ~13 mm between the tips)
+  for the rope: fully open, the far tip came down on the pan or slot beside it (play_1 episode 9). Closed across the
+  rope at the glass, the rope counts as held (the filter's clamp test misses it: its mask breaks up under the fingers;
+  episode 7 the gripper rose with the rope in it). `away_from=(x, y)`: the spot nearest that point, dragged away from
+  it (straight, else up to 90 deg off, the first the filter allows); a grasp with the rope under its tips does this
+  first (`_make_room`; Kei: clear the space near the pan, episode 9 stopped with the pan 9.5 mm from the frame).
+- Play pushes keep everything the pushed object touches (rope aside) EDGE_MM + 5 mm from the frame too (episode 8: a
+  slot push took the pan along to the frame).
   No spot: a 25 mm push of the object most often under the tips, in the first of eight directions (towards the
   centre first) that fits and leaves a spot with its outline moved (Kei, 2026-11-27: the slot beside the rope in
   play_1). In play_1's end layouts the slot is pushed 25 mm about along its length, from over the rope.

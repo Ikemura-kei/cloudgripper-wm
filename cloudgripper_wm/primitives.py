@@ -46,6 +46,9 @@ WIDE_OPEN = 1.0            # widest gripper command: 29.7 mm between tip centres
 PAN_HANDLE_MM = (15.5, 13.0, 11.0)  # centre of the pan's round part to where the handle is held, tried in this order; Pan.stl: handle from 10 to 21 mm out
 ROOM_MM, ROOM_PUSH_MM = 8.0, 25.0  # clutter: push length, and the room around the object it must leave (a tip is 5 mm)
 ROPE_STEP_MM = 8.0  # rope drag: grasp points tried every this far along the rope, from the end inwards
+ROPE_OPEN = 0.45  # rope grasp: the gripper opens this far only (17.9 mm between tip centres, ~13 mm between the tips for an
+                  # 8 mm rope): fully open (22.5 mm gap) the far tip came down on the pan or slot beside the rope (play_1
+                  # episode 9). ponytail: spacing interpolated from GRIP_TO_SEP_MM; measure it if grasps miss
 ROPE_END_MM = 20.0  # ... starting this far in from either end (Kei, 2026-11-27: thinner at the tip; was 12)
 PLAY_TWIST = (0.15, 0.4)  # play rope twist: the gripper turned this much (27 to 72 deg) while it clamps the rope
 SLOT_TOP_MM, SLOT_FLOOR_MM = 16.0, 5.0  # Slot.stl (stored upside down): walls' top, notch floor; the notch is 13.5 mm
@@ -311,13 +314,19 @@ class Primitives:
                                            ("behind it", self._cmd(start, rot)), ("down", dict(z=z_for_tip(tip))),
                                            ("push", self._cmd(end, rot)), ("up", dict(z=1.0))])
 
-    def _make_room(self, name: str) -> bool:
+    def _make_room(self, name: str, reasons=()) -> bool:
         """A grasp of `name` found no room for the tips: push it, or a rigid neighbour, ROOM_PUSH_MM so that it ends
         with ROOM_MM clear all round. Every push in eight directions is asked of the filter first; the one that
         leaves most room is done. False (nothing moved) when none fits.
 
         ponytail: the room afterwards is predicted by shifting the pushed outline only; what it pushes along is
         ignored, and the rope is never the one moved. Two objects that touch usually leave no push that fits."""
+        if any("rope" in r for r in reasons) and self._on_glass("rope", say=False) is not None:
+            # the rope under the tips: drag its part nearest the object away first (Kei, 2026-11-27: clear the space
+            # near the pan; play_1 episode 9 stopped with the pan 9 mm from the frame and the rope against it)
+            print(f"grasp {name}: making room by dragging the rope away", flush=True)
+            if self.rope_drag(0, (ROOM_PUSH_MM * cf.MM, 0.0), away_from=self.env.states[name].xy):
+                return True
         st = {n: s for n, s in self.env.states.items() if s.status == "on_glass" and s.footprint_xy is not None}
         x0, y0, x1, y1 = cf.GLASS
         near = [n for n in st if n not in (name, "rope") and _gap_mm(st[name].footprint_xy, st[n].footprint_xy) < 20]
@@ -449,10 +458,16 @@ class Primitives:
             cand["cube_into_slot"] += [(n,) for n in cubes if on(n)]
         cand["cube_out_of_slot"] += [(n, "push") for n in notch]
         cand["cube_out_of_slot"] = [c for c in cand["cube_out_of_slot"] if not isinstance(self._notch_push(c[0]), str)]
+        def chain(n):  # n and the rigid objects touching it, and so on: a push may move them all (play_1 episode 8: a
+            out = [n]  # slot push took the pan along to 9 mm from the frame, and the scene check stopped the collection)
+            for m in out:
+                out += [o for o in st if o not in out and o != "rope" and on(o) and _gap_mm(st[m].footprint_xy, st[o].footprint_xy) < cf.CONTACT_MM + 1]
+            return out
         for n in ("cube_blue", "cube_white", "slot", "pan"):
+            moved = chain(n) if on(n) else []
             for _ in range(8 if on(n) else 0):  # directions drawn until one the filter allows (play_1: two were stopped)
                 d, dist = unit(rng.uniform(0, 2 * np.pi)), float(rng.uniform(*PLAY_PUSH_MM))
-                plan = self._push_plan(n, d, dist, say=False) if inside(np.asarray(st[n].footprint_xy) + d * dist * cf.MM) else None
+                plan = self._push_plan(n, d, dist, say=False) if all(inside(np.asarray(st[m].footprint_xy) + d * dist * cf.MM) for m in moved) else None
                 if plan is not None and self._push_fits(n, plan):
                     cand["push"].append((n, tuple(float(v) for v in d), dist))
                     break
@@ -524,7 +539,7 @@ class Primitives:
             reasons.append(verdict.reason)
         else:
             # clutter: push it or a neighbour apart once, then try again (no use when only the frame is in the way)
-            if make_room and any("frame" not in r for r in reasons) and self._make_room(name):
+            if make_room and any("frame" not in r for r in reasons) and self._make_room(name, reasons):
                 return self.grasp(name, make_room=False, lift=lift)
             print(f"grasp {name}: no room for the tips ({verdict.reason}), not tried", flush=True)
             return False
@@ -748,19 +763,21 @@ class Primitives:
             out.append((p, float(np.arctan2(v[1], v[0])) if np.linalg.norm(v) > 1e-6 else 0.0))
         return out
 
-    def _rope_spot(self, end: int, states=None):
-        """(tips' midpoint, rot, mm from end `end`) of the first spot along the rope, from 12 mm in and then every
-        ROPE_STEP_MM, where the filter lets the open tips go down in `states` (default: the scene now); or, when none
-        does, the list of its reasons."""
+    def _rope_spot(self, end: int, states=None, near=None):
+        """(tips' midpoint, rot, mm from end `end`) of the first spot along the rope, from ROPE_END_MM in and then every
+        ROPE_STEP_MM (nearest `near` first, when given), where the filter lets the open tips go down in `states`
+        (default: the scene now); or, when none does, the list of its reasons."""
         states = self.env.states if states is None else states
         fp = np.asarray(states["rope"].footprint_xy)
         length_mm = np.linalg.norm(fp[:, None] - fp[None], axis=2).max() / cf.MM
         reasons = []
-        for k in np.arange(ROPE_END_MM, length_mm - ROPE_END_MM + 1, ROPE_STEP_MM):
-            p, along = self._rope_ends(k)[end]
+        spots = [(k, *self._rope_ends(k)[end]) for k in np.arange(ROPE_END_MM, length_mm - ROPE_END_MM + 1, ROPE_STEP_MM)]
+        if near is not None:
+            spots.sort(key=lambda sp: float(np.linalg.norm(sp[1] - np.asarray(near, float))))
+        for k, p, along in spots:
             rot = ((along + np.pi / 2) % np.pi) / np.pi
-            over = [*self._cmd(p, rot).values(), 1.0, rot, self.open]
-            verdict = cf.check(over, [*over[:2], 0.0, rot, self.open], states)
+            over = [*self._cmd(p, rot).values(), 1.0, rot, ROPE_OPEN]
+            verdict = cf.check(over, [*over[:2], 0.0, rot, ROPE_OPEN], states)
             if verdict.allowed:
                 return p, rot, k
             reasons.append(verdict.reason)
@@ -791,16 +808,17 @@ class Primitives:
                     return n, tuple(float(v) for v in d)
         return None
 
-    def rope_drag(self, end: int, delta_xy, twist: float = 0.0, together: bool = True) -> bool:
+    def rope_drag(self, end: int, delta_xy, twist: float = 0.0, together: bool = True, away_from=None) -> bool:
         """Grasp the rope near end 0 or 1 (tips across the rope), drag it by delta_xy at the glass and/or turn the
         gripper by `twist` (rotation command, 1 = 180 deg; the other way if that leaves the range), both in one move or,
-        `together=False`, the drag first (Kei, 2026-11-27), let go. The grasp point is the first one, from ROPE_END_MM in and then every ROPE_STEP_MM along the whole rope,
+        `together=False`, the drag first (Kei, 2026-11-27), let go. `away_from` (x, y): clearing room there, the spot
+        nearest it is taken and the rope dragged |delta_xy| straight away from it (Kei: clear the space near the pan). The grasp point is the first one, from ROPE_END_MM in and then every ROPE_STEP_MM along the whole rope,
         where the filter lets the open tips go down (a rope lying along the frame is taken where it leaves it); none:
         nothing is done."""
         if self._on_glass("rope") is None:
             return False
-        spot = self._rope_spot(end)
-        room = self._rope_room(spot, end) if isinstance(spot, list) else None
+        spot = self._rope_spot(end, near=away_from)
+        room = self._rope_room(spot, end) if isinstance(spot, list) and away_from is None else None
         if room:
             print(f"rope drag: no room for the tips along the rope, making room by pushing {room[0]}", flush=True)
             if self.push(room[0], room[1], ROOM_PUSH_MM):
@@ -810,7 +828,15 @@ class Primitives:
             print(f"rope drag: no room for the tips anywhere along the rope ({len(spot)} spots: {why}), not tried", flush=True)
             return False
         p, rot, k = spot
-        ok = self._run("rope drag", [("up", dict(z=1.0)), ("open", dict(grip=self.open)), ("turn", dict(rot=rot)),
+        if away_from is not None:  # straight away from it, else up to 90 deg off: the first drag the filter allows
+            t0, r = np.arctan2(*(p - np.asarray(away_from, float))[::-1]), np.linalg.norm(delta_xy)
+            down = [*self._cmd(p, rot).values(), 0.0, rot, self.closed]
+            dirs = [r * np.array([np.cos(t0 + a * np.pi / 4), np.sin(t0 + a * np.pi / 4)]) for a in (0, 1, -1, 2, -2)]
+            delta_xy = next((v for v in dirs if cf.check(down, [*self._cmd(p + v, rot).values(), 0.0, rot, self.closed], self.env.states, ["rope"]).allowed), None)
+            if delta_xy is None:
+                print(f"rope drag: no drag away from {np.round(away_from, 3)} fits at {k:.0f} mm from the end, not tried", flush=True)
+                return False
+        ok = self._run("rope drag", [("up", dict(z=1.0)), ("open", dict(grip=ROPE_OPEN)), ("turn", dict(rot=rot)),
                                      (f"over the rope {k:.0f} mm from the end", self._cmd(p, rot)), ("down", dict(z=0.0)), ("close", dict(grip=self.closed))])
         if ok and "rope" not in self.env.held:
             # the filter's clamp test missed it: under the fingers the rope's mask breaks up and only its largest

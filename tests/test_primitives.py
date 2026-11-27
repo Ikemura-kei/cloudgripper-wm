@@ -282,6 +282,19 @@ def test_rope_held_after_closing_across_it(prim):
     assert "rope drag: drag" in labels and labels.index("rope drag: drag") < labels.index("rope drag: let go")
 
 
+def test_rope_dragged_away_from_a_point(prim):
+    """Clearing room (Kei, 2026-11-27: clear the space near the pan): the rope is taken at the spot nearest the point and
+    dragged away from it."""
+    prim.scene.update(rope=_rope((0.3, 0.45), 0.0, length_mm=80))
+    point = (0.3 + 60 * cf.MM, 0.45 - 20 * cf.MM)  # below the rope, near its far end
+    spot = prim._rope_spot(0, near=point)
+    assert abs(spot[0][0] - point[0]) < 5 * cf.MM, spot  # the spot nearest the point (spots every 8 mm)
+    assert prim.rope_drag(0, (20 * cf.MM, 0.0), away_from=point)
+    i = max(i for i, (l, _) in enumerate(prim.log) if l == "rope drag: close")
+    ys = [a[1] for a in prim.sent[-len(prim.log) + i + 1:]]
+    assert sum(ys) > 0  # dragged up, away from the point below
+
+
 def test_rope_twist(prim):
     """Kei, 2026-11-27: clamp the rope and turn the gripper (the other way when the turn would leave the range), with or
     without a drag; the first grasp spot is ROPE_END_MM in from the end (thinner at the tip)."""
@@ -424,6 +437,9 @@ def test_random_primitive(prim):
     assert ("cube_out_of_slot", ("cube_blue", "push")) in picks and not any(k == "cube_into_slot" for k, _ in picks)
     prim.scene["pan"] = _obj(0.08, 0.6, 20, 7)  # by the frame: never pushed further towards it
     assert not any(k == "push" and a[0] == "pan" and a[1][0] < 0 for k, a in (prim.random_primitive(rng) for _ in range(60)))
+    # nor by a push of what touches it (play_1 episode 8: a slot push took the pan along to the frame)
+    prim.scene["slot"] = _obj(0.08 + 19 * cf.MM, 0.6, 15, 16, 25.5)
+    assert not any(k == "push" and a[0] == "slot" and a[1][0] < -0.3 for k, a in (prim.random_primitive(rng) for _ in range(60)))
 
 
 def test_slide_and_the_pan_at_the_frame(prim):
