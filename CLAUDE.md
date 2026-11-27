@@ -794,3 +794,19 @@ keeps everything for diagnosis (Kei): scene_start.npz (tracker states with masks
 report.txt;
 `tests/test_self_check.py`. robot20 (2026-11-27): reference complete (13 poses); three checks passed, worst healthy claw 0.987, base 0.946,
 frame 0.1 px, tilt 0.3 deg off; stuck axes simulated from the reference pictures all fail (claw 0.59 at most).
+
+## Play collection (`cloudgripper_wm/play.py`)
+
+Unattended play-data collection (Kei, 2026-11-27): episodes of 3 to 6 primitives from `random_primitive`, no new
+primitive after 300 recorded steps; the scene check before each episode (reset once, then stop for a person); the
+self-check at the start, every 15 episodes and after a surprise (`Primitives.surprise`: not lifted, dropped, closed
+on nothing), once more on failure, then stop. A stop raises the arm, opens the gripper and returns the reason. Only
+the primitives' steps are recorded. `scripts/data/collect_play.py --out SESSION --episodes N [--seed S] [--no-window]`
+runs it (continues a session's episode numbers). The session folder holds per episode the camera frames at full size
+(top and fisheye base, JPEG 95), steps.npz (commanded pose per frame, executed delta per step), diag.jsonl (per step:
+label, requested and executed action, the collision filter's verdict, held, commanded and reported pose) and the
+tracker's states with masks per frame, plus session.jsonl and the self-checks. `scripts/data/play_to_lance.py
+OUT.lance SESSION...` (own uv environment: stable-worldmodel[data] from the parent repo's checkout) writes the training
+data, frames and steps only: pixels, pixels_base, state, action (NaN on an episode's last frame); checked to load
+with `swm.data.load_dataset` at full size. `tests/test_play.py` (the Lance test skips where lancedb is missing).
+Not yet run on the robot.
