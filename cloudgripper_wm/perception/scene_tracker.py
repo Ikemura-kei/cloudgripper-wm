@@ -59,7 +59,6 @@ HIDDEN_KEEP_PX = 12  # an object on the glass that vanishes from below keeps its
                      # within this of where it was when last seen from below
 HIDDEN_INSIDE = 0.95  # ... or while this share of it lies within that mask (+4 px): the arm covers part of it (play_1
                       # episode 3: fingers 3 mm from the white cube hid half of its top, the centre moved 15 px)
-NOTCH_KEEP_IOU = 0.8  # a cube in the notch hidden from above stays there while the slot's base mask overlaps its last this much
 IN_NOTCH_FRAC = 0.8  # share of a cube's top-view mask inside the slot's outline for it to count as in the notch
 NOTCH_RED_REACH_PX = 60  # slot-red pixels this near the slot's mask count as the slot (its other wall). prim_29: seen
                          # along the notch, the back wall lay over 20 px (the old reach) above the front one, the
@@ -563,18 +562,22 @@ class SceneTracker:
             hidden = (name != "rope" and (mb is None or mb.sum() < 0.3 * full) and prev is not None and prev.status == "on_glass"
                       and name in top_seen and (covered or (prev.top_ref is not None
                                                             and np.linalg.norm(np.argwhere(mt).mean(0) - prev.top_ref) < HIDDEN_KEEP_PX)))
-            ms, ms_prev = self.base.masks.get("slot"), getattr(self.states.get("slot"), "mask_base", None)
-            was_in_notch = (name.startswith("cube") and (mb is None or mb.sum() < 0.3 * full)
-                            and prev is not None and prev.status == "stacked" and prev.on == "slot" and getattr(prev, "in_notch", False)
-                            and ms is not None and ms_prev is not None and (ms & ms_prev).sum() >= NOTCH_KEEP_IOU * (ms | ms_prev).sum() > 0)
+            ms = self.base.masks.get("slot")
+            was_in_notch = (name.startswith("cube") and (mb is None or mb.sum() < 0.3 * full) and ms is not None and ms.any()
+                            and prev is not None and prev.status == "stacked" and prev.on == "slot" and getattr(prev, "in_notch", False))
+
+            def in_the_notch():  # where the slot is now seen from below: a seated cube moves with it (play_1 episode 4)
+                (cx, cy), _, ang = cv2.minAreaRect(np.argwhere(ms)[:, ::-1].astype(np.float32))
+                s.status, s.on, s.in_notch, s.inferred_px, s.inferred_angle_deg = "stacked", "slot", True, (cx, cy), ang % 90
+                s.inferred_xy = tuple(float(v) for v in self._px_to_xy([s.inferred_px])[0])
             notch_hidden = was_in_notch and name not in top_seen
             if notch_hidden:
-                # in the slot's notch a moment ago, now gone from the top view (the only one that sees it there) and the
-                # slot unmoved from below: the arm over the slot hides it (play_1 episode 2, 2026-11-27: "unaccounted"
-                # stopped a push of the slot). ponytail: a cube lifted out of the notch by a grasp also reads as still
-                # there until the top view sees it again (cube_out_of_slot looks again from home)
-                s.status, s.on, s.in_notch = "stacked", "slot", True
-                s.inferred_px, s.inferred_xy, s.inferred_angle_deg = prev.inferred_px, prev.inferred_xy, prev.inferred_angle_deg
+                # in the slot's notch a moment ago, now gone from the top view (the only one that sees it there), and the
+                # slot seen from below: the arm over the slot hides it (play_1 episode 2, 2026-11-27: "unaccounted"
+                # stopped a push of the slot; episode 4: the same while the slot was being pushed). ponytail: a cube
+                # lifted out of the notch by a grasp also reads as still there until the top view sees it again
+                # (cube_out_of_slot looks again from home)
+                in_the_notch()
             elif hidden:
                 # on the glass a moment ago and not moved in the top view: the gripper hides it from below (prim_22,
                 # 2026-11-26: the white cube turned "off_glass" under the open tips and the grasp was refused). Keep it
@@ -628,12 +631,11 @@ class SceneTracker:
                     s.inferred_px = tuple(b[0])
                 s.inferred_xy = tuple(float(v) for v in self._px_to_xy([s.inferred_px])[0])
             if was_in_notch and name in top_seen and not (s.status == "stacked" and s.on == "slot" and s.in_notch) and not prev.doubt:
-                # one picture says it left the notch while the slot has not moved and nothing sees it on the glass:
-                # kept for this picture (play_1 episode 3: for one frame the arm near the slot made the blue cube
-                # "stacked on pan", the pan grew by a cube and a push was refused); a second in a row is believed (a
-                # refresh looks twice)
-                s.status, s.on, s.in_notch, s.doubt = "stacked", "slot", True, True
-                s.inferred_px, s.inferred_xy, s.inferred_angle_deg = prev.inferred_px, prev.inferred_xy, prev.inferred_angle_deg
+                # one picture says it left the notch and nothing sees it on the glass: kept for this picture (play_1
+                # episode 3: for one frame the arm near the slot made the blue cube "stacked on pan", the pan grew by a
+                # cube and a push was refused); a second in a row is believed (a refresh looks twice)
+                in_the_notch()
+                s.doubt = True
             self.states[name] = s
         return self.states
 

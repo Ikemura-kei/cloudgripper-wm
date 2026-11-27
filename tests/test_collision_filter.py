@@ -47,9 +47,12 @@ def test_rules():
 
     # at z 0.25 (10.5 mm) the tips no longer clear a cube: travelling into it is a push
     assert cf.check(_pose(fx, 0.40, z=0.25), _pose(fx, 0.40 + step, z=0.25), dict(cube_blue=_obj(0.5, 0.5, 10, 10))).pushed == ["cube_blue"]
-    # an unaccounted object blocks everything
+    # an unaccounted object blocks everything but going straight up (play_1 episode 4: the arm stayed down at the slot)
     lost = dict(cube_blue=SimpleNamespace(status="unaccounted", on=None, height_mm=10, footprint_xy=None))
     assert not cf.check(_pose(0.3, 0.3), _pose(0.3 + step, 0.3), lost).allowed
+    assert not cf.check(_pose(0.3, 0.3, z=0.5), _pose(0.3, 0.3, z=0.2), lost).allowed
+    assert cf.check(_pose(0.3, 0.3, z=0.2), _pose(0.3, 0.3, z=0.5), lost).allowed
+    assert not cf.check(_pose(0.3, 0.3, z=0.2), _pose(0.3 + step, 0.3, z=0.5), lost).allowed
 
 
 def test_heights():

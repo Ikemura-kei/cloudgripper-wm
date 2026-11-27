@@ -98,8 +98,8 @@ def test_cube_hidden_from_below_keeps_its_place():
 
 def test_cube_in_the_notch_hidden_from_above_stays():
     """play_1 episode 2 (2026-11-27): the arm over the slot hid the blue cube in its notch from the top camera, the only
-    one that sees it there; it became "unaccounted" and the filter stopped the push. With the slot unmoved from below
-    it stays in the notch; once the slot has moved, nothing is assumed."""
+    one that sees it there; it became "unaccounted" and the filter stopped the push. While the slot is seen from below
+    it stays in the notch and moves with the slot; without the slot, nothing is assumed."""
     from types import SimpleNamespace
     tr = st.SceneTracker.__new__(st.SceneTracker)
     tr.base, tr.top = SimpleNamespace(masks={}), SimpleNamespace(masks={})
@@ -124,6 +124,12 @@ def test_cube_in_the_notch_hidden_from_above_stays():
     s2 = tr._update()["cube_blue"]
     assert s2.status == "stacked" and s2.in_notch and s2.doubt
     assert not tr._update()["cube_blue"].in_notch
+    # back in the notch, then hidden while the slot is pushed (play_1 episode 4): it moves with the slot
+    tr.top.masks["cube_blue"] = sq((720, 1280), 380, 590, 40)
+    assert tr._update()["cube_blue"].in_notch
     tr.top.masks["cube_blue"] = np.zeros((720, 1280), bool)
-    tr.base.masks["slot"] = sq((480, 640), 260, 300, 56, 86)  # the slot has moved
+    tr.base.masks["slot"] = sq((480, 640), 260, 300, 56, 86)
+    s3 = tr._update()["cube_blue"]
+    assert s3.status == "stacked" and s3.in_notch and s3.inferred_xy[1] > s0.inferred_xy[1] + 0.05  # 60 px on
+    tr.base.masks["slot"] = np.zeros((480, 640), bool)  # the slot not seen either: nothing is assumed
     assert tr._update()["cube_blue"].status == "unaccounted"

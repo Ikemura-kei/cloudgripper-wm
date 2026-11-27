@@ -132,8 +132,9 @@ the pan is good to about half a cube and its angle is not estimated; it is not a
   cube they hid it from below and half its top, the centre moved 14 px). A lifted or pushed object moves in the top
   view and is judged as usual.
 - A cube in the slot's notch is seen from the top camera only. When it vanishes there and is not seen from below, it
-  stays in the notch while the slot's base mask overlaps its last by `NOTCH_KEEP_IOU` (0.8) (play_1 episode 2,
-  2026-11-27: the arm over the slot hid it, it became "unaccounted" and the filter stopped a push of the slot). A cube
+  stays in the notch, where the slot is now seen from below (it moves with the slot), while the slot is seen there
+  (play_1 episode 2, 2026-11-27: the arm over the slot hid it, it became "unaccounted" and the filter stopped a push of
+  the slot; episode 4: the same while the slot was pushed). A cube
   lifted out of the notch by a grasp also reads as still there until the top view sees it again. One picture that puts
   it elsewhere is doubted (kept in the notch, `doubt`); a second in a row is believed (play_1 episode 3: for one frame
   the blue cube was "stacked on pan", the pan grew by a cube and a push was refused).

@@ -8,7 +8,7 @@ Blocked (these jam and break the gripper):
   - lowering a finger onto an object or the frame;
   - opening the gripper into the frame, or into an object that the frame stops (cell 20; closing is a grasp, and
     an object clamped between the tips may be lowered and let go);
-  - any move while an object is unaccounted for.
+  - any move but straight up while an object is unaccounted for.
 Allowed: pushing a free object (reported in `verdict.pushed`), and everything that touches nothing.
 
 Pure geometry on a 0.5 mm grid in robot x, y; no GPU, no camera. Use the COMMANDED pose: the robot's reported
@@ -236,7 +236,8 @@ def check(pose0, pose1, states, held=()) -> Verdict:
     pose0, pose1 = np.asarray(pose0, float), np.asarray(pose1, float)
     v = Verdict(False, "", fingers=finger_polys(pose1))
     missing = [n for n, s in states.items() if s.status == "unaccounted" and n not in held]
-    if missing:
+    up = pose1[2] > pose0[2] and np.allclose(np.delete(pose1, 2), np.delete(pose0, 2))
+    if missing and not up:  # straight up meets nothing; staying down is worse (play_1 episode 4: the arm stayed at the slot)
         v.reason = f"blocked: {', '.join(missing)} unaccounted for"
         return v
     held = [n for n in held if n in states]
