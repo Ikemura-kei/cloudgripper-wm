@@ -790,7 +790,8 @@ through the filtered env, never below height 0.35 (Kei), and each pose is compar
 healthy robot: every axis both ways at the top height around x 0.5, y 0.5, rotation 180 deg; the gripper open,
 half-open and closed; then down to 0.7 there and up (tips ~19 mm clear a cube and the slot; at 0.35 nearly any
 neighbour blocked the spot). It judges the gripper's yellow block (fixed anchor, does not rotate) and claw in the
-top view and the yellow in the base view against the reference with a few px of slack, the block's bottom-edge angle
+top view against the reference with a few px of slack (the base view's yellow is reported only: objects under the
+gripper hide it from below, play_1 stopped on it; a check that is not robust is worse than none, Kei), the block's bottom-edge angle
 (tilt, limit 10 deg, Kei: a broken gripper hangs about 30 deg off), the base camera's shift (phase correlation of the
 navy frame, two parts with a gap, limit 5 px, Kei; healthy 0.1 to 0.3 px across scenes, blue cube included) and fresh
 pictures (the env reuses the last frame when a fetch fails). A failing pose is pictured twice more, 1 s apart, before it

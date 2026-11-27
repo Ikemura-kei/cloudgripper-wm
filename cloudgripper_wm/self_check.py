@@ -5,8 +5,10 @@ The arm visits a fixed list of poses (`_plan`) through the filtered env like eve
 at the same pose:
 - every axis got there and the gripper looks as it did: in the top view, the yellow block (the gripper's fixed
   anchor; it moves with x, y and height, not with the rotation) and the claw under it (the finger linkages; the
-  cable's thin yellow stripe is opened away); in the base view, all the yellow. Each mask must lie within NEAR_PX
-  of the reference's (`_near`: closing twice leaves the fingers a few px apart);
+  cable's thin yellow stripe is opened away). Each mask must lie within NEAR_PX of the reference's (`_near`:
+  closing twice leaves the fingers a few px apart). The base view's yellow is reported, not judged: an object on
+  the glass under the gripper hides it from below (play_1, 2026-11-27: the pan beside the check pose, 0.49 to 0.83
+  at 10 poses, a false stop), and the top view alone fails every stuck axis simulated from the reference pictures;
 - the gripper hangs straight: the angle of the block's bottom edge matches the reference within TILT_DEG (+2.3 deg
   at x 0.5, y 0.5, top height on 2026-11-26, open, half and closed alike; Kei: a broken one tilts about 30 deg);
 - the base camera was not moved: the navy frame's shift against the reference's, by phase correlation, is at most
@@ -47,7 +49,7 @@ LOW_Z = 0.7            # lowest height in the check: tips ~19 mm, clear of a cub
 YELLOW = ((18, 120, 120), (35, 255, 255))  # HSV ranges, cell 20
 NAVY = ((100, 70, 30), (125, 255, 160))    # the frame from below (S ~110, V ~70: the bright blue edge alone was too thin)
 FRAME_PIECE_PX = 5000  # frame pieces at least this large: it is two parts with a small gap (Kei); the blue cube is smaller
-NEAR_PX, NEAR_MIN, BASE_MIN = 6, 0.92, 0.85
+NEAR_PX, NEAR_MIN = 6, 0.92
 FRAME_SHIFT_PX = 5.0   # Kei, 2026-11-27: no tight margin; healthy 0.1 to 0.3 px
 TILT_DEG = 10.0        # Kei, 2026-11-27
 RETAKES, RETAKE_S = 2, 1.0  # a failing pose is pictured again this often, this far apart, before it counts: a false
@@ -144,8 +146,7 @@ def _judge(label, top, base, prev, ref: Path) -> tuple[list[str], dict, dict, di
     m, r = _measure(top, base), _measure(cv2.imread(str(ref / f"{label}_top.jpg")), cv2.imread(str(ref / f"{label}_base.jpg")))
     nums = {key: _near(m[key], r[key], NEAR_PX) for key in ("block", "claw", "base")}
     nums |= dict(frame_px=_shift(r["frame"], m["frame"]), tilt=m["tilt"], ref_tilt=r["tilt"])
-    bad = [f"{key} {nums[key]:.3f} < {BASE_MIN if key == 'base' else NEAR_MIN}" for key in ("block", "claw", "base")
-           if nums[key] < (BASE_MIN if key == "base" else NEAR_MIN)]
+    bad = [f"{key} {nums[key]:.3f} < {NEAR_MIN}" for key in ("block", "claw") if nums[key] < NEAR_MIN]  # base: reported only
     if not nums["frame_px"] <= FRAME_SHIFT_PX:
         bad.append(f"base camera moved: frame {nums['frame_px']:.1f} px off")
     if not abs(m["tilt"] - r["tilt"]) <= TILT_DEG:  # nan (no block seen) fails too
