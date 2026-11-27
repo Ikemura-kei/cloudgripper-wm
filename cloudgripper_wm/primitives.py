@@ -34,6 +34,7 @@ CENTRE_RADIUS = 0.15       # reset: objects farther than this (21 mm) from CENTR
 PUSH_TIP_MM = 3.0          # tip height while pushing an object that stands clear of the frame
 OVER_FRAME_TIP_MM = 8.6    # ... and when the push starts over the frame (6.25 mm): only objects 10 mm and taller
 APPROACH_MM = 10.0         # a push starts this far behind the object
+SLIDE_MM = 20.0            # reset: a pan that can be neither carried nor pushed is slid this far towards the centre first
 SLOT_DROP_MM = 3.0         # a cube is let go with the tips this far above the slot's top (its bottom 2.4 mm above;
                            # the filter wants CLEAR_MM between a held object's bottom and what is under it)
 EDGE_SHIFT_MM = 2.0        # grasping a cube that lies against the frame: the tips go this far towards the glass
@@ -94,8 +95,8 @@ def _pan_handle(footprint_xy) -> tuple[np.ndarray, np.ndarray]:
     disc = np.array(cv2.minMaxLoc(cv2.GaussianBlur(cv2.distanceTransform(m, cv2.DIST_L2, 5), (0, 0), 2))[3], float)
     mo = cv2.moments(m, binaryImage=True)
     u = np.array([mo["m10"] / mo["m00"], mo["m01"] / mo["m00"]]) - disc
-    u /= np.linalg.norm(u)
-    return (disc + lo) / 4 * cf.MM, u
+    n = np.linalg.norm(u)
+    return (disc + lo) / 4 * cf.MM, (u / n if n > 2 else None)  # under half a millimetre: no handle seen (mask cut short)
 
 
 class Primitives:
@@ -271,8 +272,12 @@ class Primitives:
             if far(name) <= CENTRE_RADIUS:  # read again: an earlier move may have moved it
                 continue
             # carried if a grasp fits (a cube by its sides, the slot across its width, the pan by its handle), else pushed
-            done[name] = self.pick_place(name, self._free_spot(name)) or self.push(
+            carry_or_push = lambda: self.pick_place(name, self._free_spot(name)) or self.push(
                 name, np.subtract(CENTRE, self.env.states[name].xy), (far(name) - CENTRE_RADIUS) / cf.MM)
+            done[name] = carry_or_push()
+            if not done[name] and name == "pan":  # at the frame, round part not lifting (prim_27): slide it out first
+                done[name] = self.slide(name, np.subtract(CENTRE, self.env.states[name].xy), SLIDE_MM) and (
+                    far(name) <= CENTRE_RADIUS or carry_or_push())
         if self._on_glass("rope", say=False):
             ends = self._rope_ends()
             i = int(np.argmax([np.linalg.norm(e - CENTRE) for e, _ in ends]))
@@ -349,11 +354,11 @@ class Primitives:
         kind = kinds[rng.choice(len(kinds), p=w / w.sum())]
         return kind, cand[kind][rng.integers(len(cand[kind]))]
 
-    def grasp(self, name: str, make_room: bool = True, along_mm: float | None = None) -> bool:
+    def grasp(self, name: str, make_room: bool = True, along_mm: float | None = None, lift: bool = True) -> bool:
         """Open, go down around `name`, close, lift. A cube is taken with the tips along one of its sides, the pan
         by its handle (8 mm wide), or by its round part (20 mm) with the gripper opened to WIDE_OPEN (24.7 mm between
         the tips; 22.5 at the usual open is too little) when no handle spot fits, as with the handle at the frame
-        (Kei, 2026-11-27; prim_26)."""
+        (Kei, 2026-11-27; prim_26). `lift=False`: stop once it is clamped, at the bottom (`slide`)."""
         s = self._on_glass(name)
         if s is None:
             return False
@@ -361,10 +366,12 @@ class Primitives:
         if name == "pan":
             disc, u = _pan_handle(s.footprint_xy)
             # tips either side of the handle; nearer the round part when the handle's end is at the frame
-            a = np.arctan2(u[1], u[0])
-            spots = [(disc + u * k * cf.MM, a + np.pi / 2) for k in PAN_HANDLE_MM]
+            # (no handle seen: round part only, every direction)
+            a = 0.0 if u is None else np.arctan2(u[1], u[0])
+            spots = [] if u is None else [(disc + u * k * cf.MM, a + np.pi / 2) for k in PAN_HANDLE_MM]
             # round part: a fan of directions off the handle (along it, a tip lands on the handle); the filter picks
-            spots += [(disc, a + t, WIDE_OPEN) for t in np.pi * np.array([1 / 2, 3 / 8, -3 / 8, 1 / 4, -1 / 4, 1 / 8, -1 / 8])]
+            fan = [1 / 2, 3 / 8, -3 / 8, 1 / 4, -1 / 4, 1 / 8, -1 / 8] + ([] if u is not None else [0])
+            spots += [(disc, a + t, WIDE_OPEN) for t in np.pi * np.array(fan)]
         elif name == "slot":  # across its 15 mm width, on one of its walls (the middle is only the 5 mm base under the notch)
             a = _rect_angle(s.footprint_xy)[0]
             spots = [(c + k * cf.MM * np.array([np.cos(a), np.sin(a)]), a + np.pi / 2)
@@ -395,7 +402,7 @@ class Primitives:
         else:
             # clutter: push it or a neighbour apart once, then try again (no use when only the frame is in the way)
             if make_room and any("frame" not in r for r in reasons) and self._make_room(name):
-                return self.grasp(name, make_room=False)
+                return self.grasp(name, make_room=False, lift=lift)
             print(f"grasp {name}: no room for the tips ({verdict.reason}), not tried", flush=True)
             return False
         # close, then ease off and close again (Kei, 2026-11-26): a gripper stopped by a wide object gets a fresh command
@@ -411,6 +418,8 @@ class Primitives:
             self.surprise = f"grasp {name}: closed on nothing"
             self.goto(f"grasp {name}: nothing between the tips, raising", z=1.0)
             return False
+        if not lift:
+            return ok
         before = self._top_c(name)
         if ok and not self.goto(f"grasp {name}: lift", z=1.0):
             self._give_up(f"grasp {name}")
@@ -427,6 +436,17 @@ class Primitives:
             return False
         self._lifted = (after, np.array(self.u._target_pos[:2], float)) if ok else None
         return ok
+
+    def slide(self, name: str, direction, dist_mm: float) -> bool:
+        """Clamp `name` where it lies (the grasp's spots, and its wide opening for the pan's round part), slide it
+        dist_mm along `direction` on the glass, let go and go up (Kei, 2026-11-27). The pan's round part does not
+        lift (prim_27: it rose 5 px), but it can be slid away from the frame, after which a grasp or a push has room;
+        a loose clamp still moves it, the tip behind it pushing."""
+        if not self.grasp(name, lift=False):
+            return False
+        d = np.asarray(direction, float) / np.linalg.norm(direction)
+        x, y = np.asarray(self.u._target_pos[:2], float) + d * dist_mm * cf.MM
+        return self._run(f"slide {name}", [("slide", dict(x=float(x), y=float(y))), ("let go", dict(grip=self.open)), ("up", dict(z=1.0))])
 
     def _top_c(self, name: str):
         """Centre of `name`'s top-view mask (x, y px), or None."""
@@ -604,6 +624,7 @@ class Primitives:
             return False
         fp = np.asarray(self.env.states["rope"].footprint_xy)
         length_mm = np.linalg.norm(fp[:, None] - fp[None], axis=2).max() / cf.MM
+        reasons = []
         for k in np.arange(12.0, length_mm - 11, ROPE_STEP_MM):
             p, along = self._rope_ends(k)[end]
             rot = ((along + np.pi / 2) % np.pi) / np.pi
@@ -611,8 +632,10 @@ class Primitives:
             verdict = cf.check(over, [*over[:2], 0.0, rot, self.open], self.env.states)
             if verdict.allowed:
                 break
+            reasons.append(verdict.reason)
         else:
-            print(f"rope drag: no room for the tips anywhere along the rope, not tried", flush=True)
+            why = "; ".join(f"{r} ({reasons.count(r)}x)" for r in dict.fromkeys(reasons))
+            print(f"rope drag: no room for the tips anywhere along the rope ({length_mm:.0f} mm, {len(reasons)} spots: {why}), not tried", flush=True)
             return False
         ok = self._run("rope drag", [("up", dict(z=1.0)), ("open", dict(grip=self.open)), ("turn", dict(rot=rot)),
                                      (f"over the rope {k:.0f} mm from the end", self._cmd(p, rot)), ("down", dict(z=0.0)), ("close", dict(grip=self.closed))])

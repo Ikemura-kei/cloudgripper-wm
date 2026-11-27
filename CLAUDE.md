@@ -739,6 +739,9 @@ picks the next one. Written for cell 20; heights, approach distance and waiting 
   opened to `WIDE_OPEN` 1.0 (24.7 mm between the tips; 22.5 at the usual 0.825), over a fan of directions the filter
   picks from (Kei, 2026-11-27). Only that grasp widens the cell's range; play, reset and evaluation keep 0.825.
   Tip spacing measured in the air 2026-11-27: 28.7 mm at 0.9, 29.7 mm at 1.0 (`GRIP_TO_SEP_MM`; the linkage flattens).
+  On the robot the round part did not lift (prim_27: rose 5 px, the lift check let go), so `slide(name, direction,
+  mm)` (Kei, 2026-11-27) clamps it where it lies and slides it along the glass; `reset_objects` slides a pan it can
+  neither carry nor push 20 mm towards the centre first. No handle seen in the mask: round part only.
   When no spot has room for the tips, `_make_room` first pushes the object or a rigid neighbour 25 mm (every candidate
   push is asked of the filter before anything moves), then the grasp is tried once more.
 - A grasp closes, eases off by `RECLOSE_EASE` and closes again (a fresh command to a gripper stopped by a wide

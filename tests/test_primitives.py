@@ -9,7 +9,7 @@ from cloudgripper_wm.envs.cloudgripper_env import CloudGripperEnv
 from cloudgripper_wm.envs.constants import PLAY_MAX_DELTA
 from cloudgripper_wm.envs.filtered_wrapper import FilteredCloudGripperWrapper
 from cloudgripper_wm.envs.robot_pool import RobotPool
-from cloudgripper_wm.primitives import NOTCH_PUSH_TRIES, PARK, PLAY_CARRY, PLAY_WEIGHTS, WIDE_OPEN, Primitives, z_for_tip
+from cloudgripper_wm.primitives import NOTCH_PUSH_TRIES, PARK, PLAY_CARRY, PLAY_WEIGHTS, WIDE_OPEN, Primitives, _pan_handle, z_for_tip
 
 
 def _obj(x, y, w_mm, h_mm, l_mm=None):
@@ -295,3 +295,23 @@ def test_random_primitive(prim):
     assert ("cube_out_of_slot", ("cube_blue", "push")) in picks and not any(k == "cube_into_slot" for k, _ in picks)
     prim.scene["pan"] = _obj(0.08, 0.6, 20, 7)  # by the frame: never pushed further towards it
     assert not any(k == "push" and a[0] == "pan" and a[1][0] < 0 for k, a in (prim.random_primitive(rng) for _ in range(200)))
+
+
+def test_slide_and_the_pan_at_the_frame(prim):
+    """slide: clamp at the bottom, move along the glass, let go, up. The reset slides a pan it can neither carry nor
+    push (prim_27: the round part did not lift) out from the frame first."""
+    x1, u = cf.GLASS[2], prim.env.unwrapped
+    prim.scene.update(pan=_pan(x1 - (15 - 3.4) * cf.MM, 0.5))
+    prim.goto("test: start", x=0.4)
+    assert prim.slide("pan", (-1, 0), 20)
+    labels = [l for l, _ in prim.log]
+    i = labels.index("slide pan: slide")
+    assert "grasp pan: close again" in labels[:i] and not any("grasp pan: lift" in l for l in labels)
+    assert u._target_pos[2] == 1.0 and prim.env.held == [] and np.isclose(u._target_pos[4], prim.open)
+    prim.log.clear()
+    pick = prim.pick_place
+    prim.pick_place = lambda n, xy: False if n == "pan" else pick(n, xy)  # as on the robot: the round part does not lift
+    prim.reset_objects()
+    assert any(l.startswith("slide pan") for l, _ in prim.log)
+    t = np.linspace(0, 2 * np.pi, 40)
+    assert _pan_handle(0.4 + 10 * cf.MM * np.c_[np.cos(t), np.sin(t)])[1] is None  # no handle seen: no direction, no NaN

@@ -17,6 +17,7 @@ then home):
   cube_into_slot:cube_blue       grasp the blue cube and drop it into the slot's notch
   cube_out_of_slot:cube_blue:push   get it out again: push (tips above the prongs), drop, swing or grasp
   rope_drag:0:0.1,0              grasp the rope near end 0 (or 1) and drag it by (0.1, 0)
+  slide:pan:-1,0:20              clamp the pan where it lies and slide it 20 mm along (-1, 0) on the glass
 
 Every move is sent as delta actions within PLAY_MAX_DELTA (x, y 0.1, height 0.25, rotation 0.25, gripper 0.75 per
 step). A window shows both views with the masks, the tips and each move's verdict. Watch it: Ctrl-C in the terminal stops
@@ -58,7 +59,7 @@ def parse(spec):
 
 assert parse("push:pan:1,0:30") == ("push", ["pan", (1.0, 0.0), 30.0]) and parse("rope_drag:0:0.1,0") == ("rope_drag", [0, (0.1, 0.0)])
 todo = [parse(s) for s in a.primitives]
-unknown = [n for n, _ in todo if n not in ("scene_check", "reset_objects", "push", "pick_place", "cube_into_slot", "cube_out_of_slot", "rope_drag")]
+unknown = [n for n, _ in todo if n not in ("scene_check", "reset_objects", "slide", "push", "pick_place", "cube_into_slot", "cube_out_of_slot", "rope_drag")]
 if unknown:
     sys.exit(f"unknown primitive(s): {unknown}")
 
@@ -76,7 +77,10 @@ t0 = time.time()
 try:
     env.reset()
     prim = Primitives(env, on_step=view.show)
-    for (name, args), spec in zip(todo, a.primitives):
+    from cloudgripper_wm.perception.scene_tracker import save_states  # here: that module loads torch
+    for i, ((name, args), spec) in enumerate(zip(todo, a.primitives)):
+        if not a.mock:  # the scene as the primitive starts: replays a refusal offline (load_states)
+            save_states(out / f"scene_{i:02d}_{name}.npz", env.states)
         result = getattr(prim, name)(*args)
         if isinstance(result, list):  # scene_check: the problems
             result = "fit" if not result else "NOT FIT: " + "; ".join(result)
