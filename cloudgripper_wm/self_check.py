@@ -32,12 +32,14 @@ open against closed 0.59 (2026-11-26 pictures; the base view sees only ~270 yell
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import cv2
 import numpy as np
 
 from cloudgripper_wm import collision_filter as cf
+from cloudgripper_wm.primitives import wait_scale
 
 C, R = (0.5, 0.5), 1.0  # reference pose: middle of the arm's range, rotation 180 deg (fingers side-on to the top camera)
 HALF = 0.45            # half-open gripper command
@@ -46,8 +48,10 @@ YELLOW = ((18, 120, 120), (35, 255, 255))  # HSV ranges, cell 20
 NAVY = ((100, 70, 30), (125, 255, 160))    # the frame from below (S ~110, V ~70: the bright blue edge alone was too thin)
 FRAME_PIECE_PX = 5000  # frame pieces at least this large: it is two parts with a small gap (Kei); the blue cube is smaller
 NEAR_PX, NEAR_MIN, BASE_MIN = 6, 0.92, 0.85
-FRAME_SHIFT_PX = 2.0
+FRAME_SHIFT_PX = 5.0   # Kei, 2026-11-27: no tight margin; healthy 0.1 to 0.3 px
 TILT_DEG = 10.0        # Kei, 2026-11-27
+RETAKES, RETAKE_S = 2, 1.0  # a failing pose is pictured again this often, this far apart, before it counts: a false
+                            # alarm stops the collection, worse than a missed fault (Kei, 2026-11-27)
 REF_DIR = Path(__file__).parent / "self_check_ref"  # one reference per robot, in git
 
 
@@ -135,6 +139,23 @@ def _overlay(img, cur, ref) -> np.ndarray:
     return o
 
 
+def _judge(label, top, base, prev, ref: Path, state, cmd) -> tuple[list[str], str, dict, dict]:
+    """(what is wrong, report line, this pose's masks, the reference's) for one pose."""
+    m, r = _measure(top, base), _measure(cv2.imread(str(ref / f"{label}_top.jpg")), cv2.imread(str(ref / f"{label}_base.jpg")))
+    near = {key: _near(m[key], r[key], NEAR_PX) for key in ("block", "claw", "base")}
+    shift = _shift(r["frame"], m["frame"])
+    bad = [f"{key} {v:.3f} < {BASE_MIN if key == 'base' else NEAR_MIN}" for key, v in near.items() if v < (BASE_MIN if key == "base" else NEAR_MIN)]
+    if not shift <= FRAME_SHIFT_PX:
+        bad.append(f"base camera moved: frame {shift:.1f} px off")
+    if not abs(m["tilt"] - r["tilt"]) <= TILT_DEG:  # nan (no block seen) fails too
+        bad.append(f"block edge at {m['tilt']:+.1f} deg, reference {r['tilt']:+.1f}")
+    if prev is not None and (np.array_equal(top, prev[0]) or np.array_equal(base, prev[1])):
+        bad.append("same picture as the pose before (camera frozen or fetch failed)")
+    line = (f"{label:12s} " + "  ".join(f"{key} {v:.3f}" for key, v in near.items()) + f"  frame {shift:.1f} px"
+            + f"  tilt {m['tilt']:+.1f} (ref {r['tilt']:+.1f})" + _reported(state, cmd))
+    return bad, line, m, r
+
+
 def self_check(prim, ref=None, out=None, record: bool = False) -> tuple[str, list[str]]:
     """Run the check with `prim` (Primitives on a FilteredCloudGripperWrapper after reset). Returns the status,
     "pass" | "fail" | "blocked" (the filter stopped a move: the scene, not the robot) | "recorded", and report lines.
@@ -146,49 +167,47 @@ def self_check(prim, ref=None, out=None, record: bool = False) -> tuple[str, lis
     if record and not low:
         return "blocked", [f"something tall under the gripper at {C}: clear it, then record"]
     lines = [] if low else [f"height not checked: something tall under the gripper at {C}"]
-    recs = []
-    for label, *cmd in _plan(prim, low):
+    if out:
+        Path(out).mkdir(parents=True, exist_ok=True)
+    recs, fails, prev = [], [], None
+    for k, (label, *cmd) in enumerate(_plan(prim, low)):
         if not prim.goto(f"self-check: {label}", *cmd):
             prim._give_up("self-check")
             return "blocked", lines + [f"the filter blocked '{label}': the scene is in the way, not a robot fault"]
-        top, base, _ = u._observe()
-        state, _ = (u.robot.get_state_ws if u.use_ws else u.robot.get_state)()
-        recs.append((label, cmd, top, cv2.cvtColor(base, cv2.COLOR_RGB2BGR), state))
-    if record:
-        ref.mkdir(parents=True, exist_ok=True)
-        poses = json.loads((ref / "poses.json").read_text()) if (ref / "poses.json").exists() else []
-        new = [r for r in recs if not (ref / f"{r[0]}_top.jpg").exists()]
-        for label, cmd, top, base, state in new:
-            cv2.imwrite(str(ref / f"{label}_top.jpg"), top)
-            cv2.imwrite(str(ref / f"{label}_base.jpg"), base)
-            poses.append(dict(label=label, cmd=cmd, state=state))
-        (ref / "poses.json").write_text(json.dumps(poses, indent=1, default=float))
-        return "recorded", [f"{len(new)} new poses saved to {ref} ({', '.join(r[0] for r in new) or 'none'}); existing ones kept"]
-
-    if out:
-        Path(out).mkdir(parents=True, exist_ok=True)
-    fails, prev = [], None
-    for k, (label, cmd, top, base, state) in enumerate(recs):
-        if not (ref / f"{label}_top.jpg").exists():
-            fails.append(f"{label}: not in the reference {ref} (record it)")
-            continue
-        m, r = _measure(top, base), _measure(cv2.imread(str(ref / f"{label}_top.jpg")), cv2.imread(str(ref / f"{label}_base.jpg")))
-        near = {key: _near(m[key], r[key], NEAR_PX) for key in ("block", "claw", "base")}
-        shift = _shift(r["frame"], m["frame"])
-        bad = [f"{key} {v:.3f} < {BASE_MIN if key == 'base' else NEAR_MIN}" for key, v in near.items() if v < (BASE_MIN if key == "base" else NEAR_MIN)]
-        if not shift <= FRAME_SHIFT_PX:
-            bad.append(f"base camera moved: frame {shift:.1f} px off")
-        if not abs(m["tilt"] - r["tilt"]) <= TILT_DEG:  # nan (no block seen) fails too
-            bad.append(f"block edge at {m['tilt']:+.1f} deg, reference {r['tilt']:+.1f}")
-        if prev is not None and (np.array_equal(top, prev[0]) or np.array_equal(base, prev[1])):
-            bad.append("same picture as the pose before (camera frozen or fetch failed)")
-        lines.append(f"{label:12s} " + "  ".join(f"{key} {v:.3f}" for key, v in near.items()) + f"  frame {shift:.1f} px"
-                     + f"  tilt {m['tilt']:+.1f} (ref {r['tilt']:+.1f})" + _reported(state, cmd))
-        fails += [f"{label}: {b}" for b in bad]
+        m = r = None
+        for take in range(RETAKES + 1):
+            if take:
+                time.sleep(RETAKE_S * wait_scale(u))
+            top, base, _ = u._observe()
+            base = cv2.cvtColor(base, cv2.COLOR_RGB2BGR)
+            state, _ = (u.robot.get_state_ws if u.use_ws else u.robot.get_state)()
+            if record:
+                break
+            if not (ref / f"{label}_top.jpg").exists():
+                bad, line = [f"not in the reference {ref} (record it)"], f"{label:12s} not in the reference"
+                break
+            bad, line, m, r = _judge(label, top, base, prev, ref, state, cmd)
+            if not bad:
+                break
         prev = top, base
-        if out:
+        if record:
+            recs.append((label, cmd, top, base, state))
+            continue
+        lines.append(line + (f"  (pictured {take + 1} times)" if take else ""))
+        fails += [f"{label}: {b}" for b in bad]
+        if out and m is not None:
             t, b = _overlay(top, m["block"] | m["claw"], r["block"] | r["claw"]), _overlay(base, m["base"] | m["frame"], r["base"] | r["frame"])
             b = cv2.resize(b, (b.shape[1] * t.shape[0] // b.shape[0], t.shape[0]))
             pic = cv2.resize(np.hstack([t, b]), None, fx=0.5, fy=0.5)
             cv2.imwrite(str(Path(out) / f"{k:02d}_{label}{'_FAIL' if bad else ''}.jpg"), pic)
-    return ("fail" if fails else "pass"), lines + (["FAILED:", *fails] if fails else [])
+    if not record:
+        return ("fail" if fails else "pass"), lines + (["FAILED:", *fails] if fails else [])
+    ref.mkdir(parents=True, exist_ok=True)
+    poses = json.loads((ref / "poses.json").read_text()) if (ref / "poses.json").exists() else []
+    new = [r for r in recs if not (ref / f"{r[0]}_top.jpg").exists()]
+    for label, cmd, top, base, state in new:
+        cv2.imwrite(str(ref / f"{label}_top.jpg"), top)
+        cv2.imwrite(str(ref / f"{label}_base.jpg"), base)
+        poses.append(dict(label=label, cmd=cmd, state=state))
+    (ref / "poses.json").write_text(json.dumps(poses, indent=1, default=float))
+    return "recorded", [f"{len(new)} new poses saved to {ref} ({', '.join(r[0] for r in new) or 'none'}); existing ones kept"]

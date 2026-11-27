@@ -769,8 +769,9 @@ half-open and closed; then down to 0.7 there and up (tips ~19 mm clear a cube an
 neighbour blocked the spot). It judges the gripper's yellow block (fixed anchor, does not rotate) and claw in the
 top view and the yellow in the base view against the reference with a few px of slack, the block's bottom-edge angle
 (tilt, limit 10 deg, Kei: a broken gripper hangs about 30 deg off), the base camera's shift (phase correlation of the
-navy frame, two parts with a gap, limit 2 px; healthy 0.1 to 0.3 px across scenes, blue cube included) and fresh
-pictures (the env reuses the last frame when a fetch fails). The reported pose is printed per pose, not judged
+navy frame, two parts with a gap, limit 5 px, Kei; healthy 0.1 to 0.3 px across scenes, blue cube included) and fresh
+pictures (the env reuses the last frame when a fetch fails). A failing pose is pictured twice more, 1 s apart, before it
+counts: a false alarm stops the collection and is worse than a missed fault (Kei), so limits keep wide margins. The reported pose is printed per pose, not judged
 (whether it can be trusted is open: on 2026-11-23 it lagged, cause not established; 2026-11-27 it matched within
 0.001); motor currents are not used (Kei: never used).
 The reference is `cloudgripper_wm/self_check_ref/<robot>/`, committed to git (Kei: safe from accidental deletion);

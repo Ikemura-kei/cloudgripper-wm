@@ -58,7 +58,7 @@ def prim():
     u, look = env.unwrapped, {"pics": _pics}
 
     def observe():
-        top, base = look["pics"]()
+        top, base = _pics(tilt=30) if look.pop("glitch", False) else look["pics"]()
         return top, cv2.cvtColor(base, cv2.COLOR_BGR2RGB), u._target_pos.copy()
     u._observe = observe
     p = Primitives(env)
@@ -90,9 +90,16 @@ def test_record_then_check(prim, tmp_path):
     prim.look["pics"] = lambda: frozen  # the camera delivers the same frame
     status, lines = self_check(prim, ref)
     assert status == "fail" and any("same picture" in l for l in lines)
-    prim.look["pics"] = lambda: _pics(moved=4)
+    prim.look["pics"] = lambda: _pics(moved=8)
     status, lines = self_check(prim, ref)
-    assert status == "fail" and any("base camera moved" in l for l in lines) and FRAME_SHIFT_PX < 4
+    assert status == "fail" and any("base camera moved" in l for l in lines) and FRAME_SHIFT_PX < 8
+
+    prim.look["pics"] = _pics  # one bad picture at x+ (a glitch): pictured again, and the check passes
+    goto = prim.goto
+    prim.goto = lambda label, *a, **k: (goto(label, *a, **k), prim.look.update(glitch=label.endswith("x+")))[0]
+    status, lines = self_check(prim, ref)
+    assert status == "pass" and any(l.startswith("x+") and "pictured 2 times" in l for l in lines), "\n".join(lines)
+    prim.goto = goto
 
     prim.look["pics"] = _pics
     tips = np.concatenate(cf.finger_polys([0.5, 0.5, LOW_Z, R, prim.open])).mean(0)
