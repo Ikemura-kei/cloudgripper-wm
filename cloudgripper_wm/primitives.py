@@ -142,10 +142,13 @@ class Primitives:
         target = np.array([v if v is not None else p for v, p in zip((x, y, z, rot, grip), self.u._target_pos)], np.float32)
         target[:2] = np.clip(target[0], *self.u._x_range), np.clip(target[1], *self.u._y_range)  # as the env will clip
         limit = self.u.max_delta * (self.rng.uniform(*STEP_SCALE) if self.rng is not None else 1.0)
+        limit[4] = self.u.max_delta[4]  # the gripper is binary (Kei, 2026-11-27): all of it in the first step, as far as
+        # the env's limit allows (0.75: open and close in one; WIDE_OPEN from closed in two)
         while (n := int(np.ceil((np.abs(target - self.u._target_pos) / limit).max() - 1e-6))) > 0:
             delta = (target - self.u._target_pos) / n  # what is left, in n equal steps: the last ends exactly on target
             if self.rng is not None and n > 1:
                 delta = np.clip(delta * self.rng.uniform(1 - STEP_NOISE, 1 + STEP_NOISE, 5), -self.u.max_delta, self.u.max_delta)
+            delta[4] = np.clip(target[4] - self.u._target_pos[4], -self.u.max_delta[4], self.u.max_delta[4])
             # wait long enough for the arm to arrive before the next picture: the filter trusts the commanded pose
             wait, self.u.dwell_time = self.u.dwell_time, (0.5 + 4 * float(np.hypot(*delta[:2])) + 2 * abs(float(delta[2]))
                                                           + abs(float(delta[3])) + (0.5 if abs(delta[4]) > 1e-4 else 0)) * wait_scale(self.u)

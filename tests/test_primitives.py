@@ -108,6 +108,11 @@ def test_play_varies_steps_and_merges_top_moves(prim):
         assert prim.push("pan", (1, 0), 30) and abs(u._target_pos[2] - 1.0) < 1e-6
         labels += [l for l, _ in prim.log]
     assert any(" + " in l for l in labels) and any(l == "push pan: close" for l in labels)
+    # the gripper is binary (Kei): an open or close is one step, also inside a merged move
+    prim.sent.clear()
+    assert prim.goto("test: open", grip=prim.open) and prim.goto("test: close while moving", x=0.3, grip=prim.closed)
+    grips = [a[4] for a in prim.sent if abs(a[4]) > 1e-6]
+    assert len(grips) == 2 and all(abs(abs(g) - (prim.open - prim.closed)) < 1e-6 for g in grips), grips
     assert not any(" + " in l and ("up" in l or "down" in l) for l in labels), [l for l in labels if " + " in l]
 
 

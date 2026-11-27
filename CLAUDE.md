@@ -731,7 +731,7 @@ the world model uses; the collision filter judges every step; a blocked move giv
 picks the next one. Written for cell 20; heights, approach distance and waiting times are first guesses.
 In play (`Primitives.rng`, set by `collect`; Kei, 2026-11-27: varied actions for the world model) each move draws its
 step limit (0.3 to 1 times the env's, `STEP_SCALE`), each step's moving axes are scaled by 1 +- 0.2 (the last step
-lands on the target), and neighbouring moves at the top height on different axes (gripper, turn, x/y) are merged half
+lands on the target; the gripper is binary, Kei: always all of it in a move's first step), and neighbouring moves at the top height on different axes (gripper, turn, x/y) are merged half
 the time, never into a height change. Larger steps than `PLAY_MAX_DELTA` need the env's limit raised. Without rng
 (supervised runs, tests): equal steps, one axis group a move.
 
