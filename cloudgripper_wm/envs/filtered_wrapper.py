@@ -50,6 +50,8 @@ class FilteredCloudGripperWrapper(gym.Wrapper):
         self.states: dict | None = None
         self.held: list[str] = []  # objects in the grasp, from the filter's verdicts
         self.n_steps = self.n_blocked = 0
+        self.last_requested = self.last_action = None  # the last step's action as asked and as executed (zero if blocked)
+        self.last_verdict = None  # and the collision filter's reason: "free", "pushes ..." or why it was blocked
 
     def _see(self, start: bool = False) -> None:
         u = self.unwrapped
@@ -97,6 +99,7 @@ class FilteredCloudGripperWrapper(gym.Wrapper):
         candidate[4] = np.clip(candidate[4], *u._gripper_range)
         verdict = collision_filter.check(current, candidate, self.states, self.held)
         self.n_steps += 1
+        self.last_requested, self.last_verdict = action.copy(), verdict.reason
         if not verdict.allowed:
             self.n_blocked += 1
             print(f"[{self._name}] filter: {verdict.reason}; holding the pose ({self.n_blocked} of {self.n_steps} steps blocked)")
@@ -106,6 +109,7 @@ class FilteredCloudGripperWrapper(gym.Wrapper):
             action = np.zeros_like(action)
         else:
             self.held = verdict.held
+        self.last_action = np.asarray(action, dtype=np.float32).copy()
         out = self.env.step(action)
         self._see()
         return out

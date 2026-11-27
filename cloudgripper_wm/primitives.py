@@ -63,7 +63,7 @@ DROP_PX = 50                # before lowering: a held object this far from where
 FREE_MM = 22.0             # reset: a cube is put down at least this far from every other object's outline
 PARK = (0.5, 0.95)         # scene check: the arm looks from here at the top height, above the glass's far edge in the
                            # top view and over the frame from below: it hides nothing on the glass in either view
-EDGE_MM = 10.0             # scene check: closest a rigid object (or the rope's centre) may lie to the frame.
+EDGE_MM = 10.0             # scene check: closest a rigid object may lie to the frame (the rope: some part of it farther).
                            # ponytail: first guess (a tip is 5 mm, plus the filter's margins); tune in supervised runs
 
 
@@ -98,6 +98,8 @@ class Primitives:
         """`env`: a FilteredCloudGripperWrapper after reset. `on_step(label, blocked)`: called after every move."""
         self.env, self.u, self.on_step = env, env.unwrapped, on_step
         self.open, self.closed = self.u._gripper_range[1], self.u._gripper_range[0]
+        self.surprise: str | None = None  # set when the cameras contradict the plan (not lifted, dropped, closed on
+                                          # nothing): the collection runs a self-check next; the caller clears it
 
     # ------------------------------------------------------------------ moves
     def goto(self, label: str, x=None, y=None, z=None, rot=None, grip=None) -> bool:
@@ -277,9 +279,9 @@ class Primitives:
     def scene_check(self) -> list[str]:
         """Is the scene fit for a play episode (Kei, 2026-11-27)? Parks the arm at PARK, looks again, and returns the
         problems, none when fit: every object accounted for, on the glass or a cube in the slot's notch; no rigid
-        object within EDGE_MM of the frame, and not the rope's centre either (the rope is dragged from wherever along
-        it the tips fit, so an end at the frame is fine). On problems the caller runs reset_objects once and checks
-        again, then stops for a person."""
+        object within EDGE_MM of the frame; the rope only when all of it is (Kei: it is dragged from wherever along it
+        the tips fit, so a rope with any part well inside is fine). On problems the caller runs reset_objects once and
+        checks again, then stops for a person."""
         from cloudgripper_wm.perception.scene_tracker import INVENTORY  # here: that module loads torch
         if not (self.goto("scene check: up", z=1.0) and self.goto("scene check: park", x=PARK[0], y=PARK[1])):
             return ["could not park: the filter blocked the move"]
@@ -290,8 +292,9 @@ class Primitives:
             if s is None or not (s.status == "on_glass" or (s.status == "stacked" and s.on == "slot" and getattr(s, "in_notch", False))):
                 problems.append(f"{name}: {'not tracked' if s is None else s.status + (' on ' + s.on if s.on else '')}")
             elif s.status == "on_glass":
-                p = np.atleast_2d(s.xy if name == "rope" else s.footprint_xy)
-                edge = min((p[:, 0] - x0).min(), (x1 - p[:, 0]).min(), (p[:, 1] - y0).min(), (y1 - p[:, 1]).min()) / cf.MM
+                p = np.atleast_2d(s.footprint_xy)
+                d = np.min([p[:, 0] - x0, x1 - p[:, 0], p[:, 1] - y0, y1 - p[:, 1]], axis=0) / cf.MM  # each point to the frame
+                edge = d.max() if name == "rope" else d.min()
                 if edge < EDGE_MM:
                     problems.append(f"{name}: {edge:.0f} mm from the frame (needs {EDGE_MM:.0f})")
         return problems
@@ -345,6 +348,7 @@ class Primitives:
                                           ("over it", self._cmd(c, rot)), ("down", dict(z=0.0)), ("close", dict(grip=self.closed)),
                                           ("ease", dict(grip=self.closed + RECLOSE_EASE)), ("close again", dict(grip=self.closed))])
         if ok and name not in self.env.held:  # closed on nothing
+            self.surprise = f"grasp {name}: closed on nothing"
             self.goto(f"grasp {name}: nothing between the tips, raising", z=1.0)
             return False
         before = self._top_c(name)
@@ -358,6 +362,7 @@ class Primitives:
             print(f"grasp {name}: rose {before[1] - after[1]:.0f} px in the top view (needs {LIFT_RISE_PX})", flush=True)
         if ok and before is not None and after is not None and before[1] - after[1] < LIFT_RISE_PX:
             print(f"grasp {name}: it did not come up (top view: {before[1] - after[1]:.0f} px), letting go", flush=True)
+            self.surprise = f"grasp {name}: did not come up"
             self.goto(f"grasp {name}: not lifted, opening", grip=self.open)  # opening also clears "holding"
             return False
         self._lifted = (after, np.array(self.u._target_pos[:2], float)) if ok else None
@@ -385,6 +390,7 @@ class Primitives:
             return True
         print(f"{label}: {held[0]} is not where it should be in the gripper (top view, {c1 - expect} px off): dropped", flush=True)
         self.env.held = []
+        self.surprise = f"{label}: {held[0]} dropped"
         return False
 
     def place(self, xy, tip_mm: float | None = None) -> bool:

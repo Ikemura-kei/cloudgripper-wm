@@ -254,3 +254,9 @@ def test_scene_check(prim):
     prim.scene["pan"] = SimpleNamespace(status="unaccounted", on=None, height_mm=7, inferred_xy=None)
     prim.scene["cube_blue"].in_notch = False  # on the slot's wall, not in the notch
     assert [p.split(":")[0] for p in prim.scene_check()] == ["cube_blue", "cube_white", "pan"]
+    prim.scene.update(cube_blue=_obj(0.4, 0.4, 15, 15), cube_white=_obj(0.5, 0.6, 15, 15), pan=_obj(0.35, 0.6, 20, 7))
+    prim.scene["rope"] = _obj(0.4, 0.06, 60, 8, 8)  # along the low-y frame, one end well inside
+    prim.scene["rope"].footprint_xy[1] = (0.4, 0.3)
+    assert prim.scene_check() == []
+    prim.scene["rope"] = _obj(0.4, 0.06, 60, 8, 8)  # all of it along the frame
+    assert [p.split(":")[0] for p in prim.scene_check()] == ["rope"]
