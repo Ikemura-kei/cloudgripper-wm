@@ -1,6 +1,7 @@
 """Play primitives on the mock robot with a made-up scene (cell 20): the sequences run, and a blocked move gives up."""
 from types import SimpleNamespace
 
+import cv2
 import numpy as np
 import pytest
 
@@ -69,10 +70,13 @@ def test_objects_against_the_frame(prim):
     # 17 mm of glass behind the pan (robot20, 2026-11-26): a shorter run-up fits, the push is done
     prim.scene.clear(); prim.scene.update(pan=_obj(x0 + 27 * cf.MM, 0.5, 20, 7))
     assert prim.push("pan", (1, 0), 30)
-    # a cube against either frame is picked up (tips along the frame, a little towards the glass) and put down
+    # a cube against either frame is clamped (tips along the frame, a little towards the glass) and slid in; the mock's
+    # scene does not move, so the reset reports it still there
     for x in (x0 + 5 * cf.MM, x1 - 5 * cf.MM):
         prim.scene.clear(); prim.scene.update(cube_blue=_obj(x, 0.5, 10, 10))
-        assert prim.reset_objects() == {"cube_blue": True}, prim.log[-3:]
+        prim.log.clear()
+        assert "cube_blue" in [p.split(":")[0] for p in prim.reset_objects()], prim.log[-3:]  # with the absent ones
+        assert ("slide cube_blue: slide", False) in prim.log
         assert abs(prim.env.unwrapped._target_pos[3] - 0.5) < 1e-6  # tips along y, the frame's direction there
 
 
@@ -107,8 +111,10 @@ def test_grasp_place_slot_reset_rope(prim):
     assert "down" in prim.log[let_go - 1][0] and not prim.log[let_go - 1][1]
     prim.scene.clear()
     prim.scene.update(cube_white=_obj(0.75, 0.75, 10, 10), pan=_obj(0.45, 0.5, 20, 7))  # only the cube is far from the centre
-    assert prim.reset_objects() == {"cube_white": True}  # in a corner: no grasp fits, it is pushed out diagonally
-    assert not any("grasp cube_white" in l for l, _ in prim.log) and prim.log[-1][0] == "push cube_white: up"
+    prim.log.clear()
+    prim.reset_objects()  # in a corner: no clamp fits, it is pushed out diagonally; the pan in the middle stays
+    assert not any("grasp cube_white" in l for l, _ in prim.log) and ("push cube_white: up", False) in prim.log
+    assert not any(l.startswith(("push pan", "slide pan", "grasp pan")) for l, _ in prim.log)
     rope = _obj(0.5, 0.2, 60, 8, 8); rope.footprint_xy = np.array([[x, 0.2 + s * 4 * cf.MM] for s in (-1, 1) for x in np.linspace(0.3, 0.7, 30)[::s]])
     prim.scene.clear(); prim.scene.update(rope=rope)
     assert prim.rope_drag(0, (0.0, 0.1)) and prim.env.held == []
@@ -141,9 +147,11 @@ def test_pan_is_carried_by_its_handle(prim):
     assert prim.grasp("pan") and prim.env.held == ["pan"]
     tips_x = u._target_pos[0] + cf.TOOL_OFFSET[0] + (np.array([[0, -1], [1, 0]]) @ cf.TOOL_OFFSET_TURNING)[0]
     assert tips_x < x1 - 7 * cf.MM and prim.place((0.45, 0.5))
-    # the reset takes that way for a pan far from the centre
+    # the reset slides a pan at the frame in, clamped by its handle (never carried: it tilts)
     prim.scene.clear(); prim.scene.update(pan=_pan(x0 + 14 * cf.MM, 0.5))
-    assert prim.reset_objects() == {"pan": True} and any("grasp pan: close" in l for l, _ in prim.log)
+    prim.log.clear()
+    prim.reset_objects()
+    assert ("slide pan: slide", False) in prim.log and not any(l.startswith("place") for l, _ in prim.log)
 
 
 def test_pan_by_its_round_part(prim):
@@ -191,7 +199,9 @@ def test_slot_is_carried_across_its_width(prim):
     # an end against the low-x frame: nothing reaches behind it, but the tips fit either side of its 15 mm width
     prim.scene.update(slot=_obj(x0 + 14 * cf.MM, 0.5, 25.5, 16, 15))
     assert not prim.push("slot", (1, 0), 30)
-    assert prim.reset_objects() == {"slot": True} and any("grasp slot: close" in l for l, _ in prim.log)
+    prim.log.clear()
+    prim.reset_objects()  # a push first (Kei), which cannot get behind it here; then clamped across its width and slid
+    assert ("slide slot: slide", False) in prim.log
     u = prim.env.unwrapped
     assert abs(u._target_pos[3] - 0.5) < 1e-6 and prim.env.held == []  # tips were separated along y, its width
 
@@ -318,3 +328,29 @@ def test_slide_and_the_pan_at_the_frame(prim):
     assert any(l.startswith("slide pan") for l, _ in prim.log)
     t = np.linspace(0, 2 * np.pi, 40)
     assert _pan_handle(0.4 + 10 * cf.MM * np.c_[np.cos(t), np.sin(t)])[1] is None  # no handle seen: no direction, no NaN
+
+
+def test_free_spot_keeps_clear_of_outlines(prim):
+    """prim_28: a spot 22 mm from the pan's corners was next to its long edge, and the white cube went onto the pan."""
+    prim.goto("test: a step", x=0.4)
+    long = _obj(0.44, 0.45, 60, 7, 6)  # a long thin outline across the centre: corners far, edge close
+    prim.scene.update(pan=long)
+    p = prim._free_spot("cube_white")
+    edge = -cv2.pointPolygonTest(np.float32(long.footprint_xy / cf.MM), tuple(map(float, p / cf.MM)), True)
+    assert edge > 22
+    prim.scene.update(pan=_obj(0.44, 0.45, 110, 7, 110))  # covers the glass: no free place, and nothing is carried
+    assert prim._free_spot("cube_white") is None and not prim.pick_place("cube_blue", None)
+
+
+def test_given_up_while_holding_puts_it_back(prim):
+    """prim_28: lowering the white cube onto the pan was blocked, and the give-up dropped it from the top height onto
+    the pan. Now it goes back where it was taken and is let go there."""
+    prim.scene.update(cube_white=_obj(0.35, 0.4, 15, 15), pan=_obj(0.6, 0.6, 30, 7, 30))
+    assert prim.grasp("cube_white") and prim.env.held == ["cube_white"]
+    taken = prim.env.unwrapped._target_pos[:2].copy()
+    prim.log.clear()
+    assert not prim.place((0.6, 0.6))  # over the pan: carried there, the lowering is blocked
+    labels = [l for l, _ in prim.log]
+    assert "place: given up, back where it was taken" in labels and not any("dropping" in l for l in labels)
+    i = labels.index("place: given up, back where it was taken")
+    assert np.allclose(prim.env.unwrapped._target_pos[:2], taken) and prim.env.held == [] and "let go" in " ".join(labels[i:])

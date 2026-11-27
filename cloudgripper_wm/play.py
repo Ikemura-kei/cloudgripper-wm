@@ -6,7 +6,7 @@
 
 An episode is 3 to 6 primitives drawn by `Primitives.random_primitive` (fewer when the scene allows none); no new
 primitive starts once MAX_STEPS steps are recorded (one under way finishes). Before each episode the scene check
-runs; when it fails, `reset_objects` once, then the check again, else the collection stops for a person. The
+runs; when it fails, `reset_objects` (it fixes the named objects, checking after each), else the collection stops for a person. The
 self-check runs at the start, every CHECK_EVERY episodes and after a surprise (`Primitives.surprise`); a failed one
 runs once more, and a second failure stops the collection. A stop raises the arm, opens the gripper and returns the
 reason. Only the primitives' steps are recorded; parking, checks and resets between episodes are not.
@@ -126,10 +126,9 @@ def collect(prim, rec: Recorder, out, episodes: int, rng, check=None, check_ever
         problems = prim.scene_check()
         if problems:
             log("scene_check", episode=ep, problems=problems)
-            log("reset", episode=ep, result=prim.reset_objects())
-            problems = prim.scene_check()
+            problems = prim.reset_objects()  # fixes the named objects, checking the scene after each
+            log("reset", episode=ep, problems_left=problems)
             if problems:
-                log("scene_check", episode=ep, problems=problems)
                 return stop("scene not fit after a reset: " + "; ".join(problems))
         rec.start(ep)
         k = int(rng.integers(EPISODE_PRIMITIVES[0], EPISODE_PRIMITIVES[1] + 1))

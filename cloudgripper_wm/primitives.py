@@ -34,7 +34,6 @@ CENTRE_RADIUS = 0.15       # reset: objects farther than this (21 mm) from CENTR
 PUSH_TIP_MM = 3.0          # tip height while pushing an object that stands clear of the frame
 OVER_FRAME_TIP_MM = 8.6    # ... and when the push starts over the frame (6.25 mm): only objects 10 mm and taller
 APPROACH_MM = 10.0         # a push starts this far behind the object
-SLIDE_MM = 20.0            # reset: a pan that can be neither carried nor pushed is slid this far towards the centre first
 SLOT_DROP_MM = 3.0         # a cube is let go with the tips this far above the slot's top (its bottom 2.4 mm above;
                            # the filter wants CLEAR_MM between a held object's bottom and what is under it)
 EDGE_SHIFT_MM = 2.0        # grasping a cube that lies against the frame: the tips go this far towards the glass
@@ -71,6 +70,12 @@ EDGE_MM = 10.0             # scene check: closest a rigid object may lie to the 
 PLAY_WEIGHTS = dict(pick_place=2, cube_into_slot=2, cube_out_of_slot=2, push=1, rope_drag=1)  # play: kinds (Kei, 2026-11-27)
 PLAY_CARRY = ("cube_blue", "cube_white")  # play pick_place: cubes only until the slot and pan grasps have run supervised
 PLAY_PUSH_MM, PLAY_DRAG_MM = (10.0, 40.0), (10.0, 30.0)  # play: push and rope-drag distances, drawn uniformly
+
+
+def _clear_of(p, outlines, mm: float) -> bool:
+    """Is point p (robot x, y) farther than mm from every outline (robot x, y polygons), edges included?"""
+    q = tuple(float(v) for v in np.asarray(p, float) / cf.MM)
+    return all(cv2.pointPolygonTest(np.float32(np.asarray(o, float) / cf.MM), q, True) < -mm for o in outlines)
 
 
 def z_for_tip(mm: float) -> float:
@@ -139,8 +144,21 @@ class Primitives:
         return True
 
     def _give_up(self, name: str) -> None:
-        """Arm to the top height; whatever is held is dropped from there, so the next primitive starts empty-handed."""
+        """Arm to the top height, empty-handed. What is held at the bottom is let go where it is (it rests on the
+        glass); what is held higher up is put back where it was picked up (that spot was free), after the drop check;
+        only if the filter refuses that is it dropped from the top height. prim_28: a cube given up over the pan was
+        dropped onto it from the top height."""
+        if self.env.held and self.u._target_pos[2] < 0.5:
+            self._let_go(f"{name}: given up")
         self.goto(f"{name}: given up, raising", z=1.0)
+        back = getattr(self, "_lifted", None)
+        if self.env.held and back is not None and self._still_held(f"{name}: given up") and self.env.held:
+            x, y = back[1]
+            if self.goto(f"{name}: given up, back where it was taken", x=float(x), y=float(y)) and \
+                    self.goto(f"{name}: given up, down", z=0.0) and self._let_go(f"{name}: given up"):
+                self.goto(f"{name}: given up, up", z=1.0)
+                return
+            self.goto(f"{name}: given up, raising", z=1.0)
         if self.env.held:
             self.goto(f"{name}: given up, dropping {', '.join(self.env.held)}", grip=self.open)
 
@@ -250,61 +268,79 @@ class Primitives:
         print(f"grasp {name}: making room by pushing {best[1][0]}", flush=True)
         return self.push(best[1][0], best[1][1], ROOM_PUSH_MM)
 
-    def _free_spot(self, name: str) -> np.ndarray:
-        """A place near CENTRE at least FREE_MM from every other object's outline (the nearest to CENTRE that is)."""
-        others = [np.asarray(s.footprint_xy) for n, s in self.env.states.items() if n != name and s.footprint_xy is not None]
-        ring = [np.array(CENTRE) + r * np.array([np.cos(t), np.sin(t)]) for r in (0, 0.07, 0.14) for t in np.arange(0, 2 * np.pi, np.pi / 4)]
-        ok = [p for p in ring if all(np.linalg.norm(o - p, axis=1).min() > FREE_MM * cf.MM for o in others)]
-        return ok[0] if ok else np.array(CENTRE)
+    def _free_spot(self, name: str) -> np.ndarray | None:
+        """The place nearest CENTRE, EDGE_MM + 10 mm from the frame, that is at least FREE_MM from every other object's
+        outline (edges included; prim_28: corners only put a cube on the pan's edge), or None: no free place."""
+        others = [np.asarray(s.footprint_xy) for n, s in self.env.states.items() if n != name and getattr(s, "footprint_xy", None) is not None]
+        x0, y0, x1, y1 = cf.GLASS
+        m = (EDGE_MM + 10) * cf.MM
+        ring = [np.array(CENTRE) + r * np.array([np.cos(t), np.sin(t)]) for r in (0, 0.07, 0.14, 0.21, 0.28) for t in np.arange(0, 2 * np.pi, np.pi / 8)]
+        ok = [p for p in ring if x0 + m < p[0] < x1 - m and y0 + m < p[1] < y1 - m and _clear_of(p, others, FREE_MM)]
+        return ok[0] if ok else None
 
-    def reset_objects(self) -> dict[str, bool]:
-        """Bring every object that is far from CENTRE back towards it, farthest first: each rigid object is picked up
-        and put down on a free spot (that also works against the frame, where nothing can get behind it), or pushed
-        when no grasp fits (a cube in a corner); the rope is dragged from the first spot along it the tips fit.
-        Returns {name: done} for what it tried.
+    def reset_objects(self) -> list[str]:
+        """Make the scene fit for play with as little moving as possible (Kei, 2026-11-27): only the objects the scene
+        check names, one at a time, the scene checked again after each. Returns the problems left (none: fit).
 
-        ponytail: a pan whose handle points at the frame and whose round part is near it, and a slot with its long side
-        against the low-x or low-y frame, stay there (no grasp fits, nothing gets behind them): turn them with a
-        sideways push when that happens often."""
-        done = {}
-        far = lambda n: float(np.linalg.norm(np.subtract(self.env.states[n].xy, CENTRE)))
-        for name in sorted((n for n in self.env.states if n != "rope" and self._on_glass(n, say=False)), key=far, reverse=True):
-            if far(name) <= CENTRE_RADIUS:  # read again: an earlier move may have moved it
+        A rigid object is moved just clear of the frame (EDGE_MM + 10 mm from it, towards the centre): slid (clamped
+        where it lies; prim_28: that freed the pan from the frame), else pushed, else carried to a free spot, but never
+        the pan (carried by its handle it tilts: the round part is the heavy end). The slot is pushed first (Kei: it
+        can nearly always be pushed). The rope is dragged in. An object
+        that is not on the glass cannot be brought back here: it stays a problem, for a person.
+
+        prim_28, before this: every object more than 21 mm from the centre was carried there; that tilted the pan,
+        pushed the slot and rope to the frame and put the white cube on the pan."""
+        problems, tried = self.scene_check(), set()
+        while problems:
+            name = next((n for n in (p.split(":")[0] for p in problems) if n not in tried), None)
+            if name is None:
+                break
+            tried.add(name)
+            s = self._on_glass(name, say=False)
+            if s is None:
+                print(f"reset: {name} is not on the glass, nothing to do here", flush=True)
                 continue
-            # carried if a grasp fits (a cube by its sides, the slot across its width, the pan by its handle), else pushed
-            carry_or_push = lambda: self.pick_place(name, self._free_spot(name)) or self.push(
-                name, np.subtract(CENTRE, self.env.states[name].xy), (far(name) - CENTRE_RADIUS) / cf.MM)
-            done[name] = carry_or_push()
-            if not done[name] and name == "pan":  # at the frame, round part not lifting (prim_27): slide it out first
-                done[name] = self.slide(name, np.subtract(CENTRE, self.env.states[name].xy), SLIDE_MM) and (
-                    far(name) <= CENTRE_RADIUS or carry_or_push())
-        if self._on_glass("rope", say=False):
-            ends = self._rope_ends()
-            i = int(np.argmax([np.linalg.norm(e - CENTRE) for e, _ in ends]))
-            to = np.subtract(CENTRE, ends[i][0])
-            if np.linalg.norm(to) > CENTRE_RADIUS:
-                done["rope"] = self.rope_drag(i, to * (1 - CENTRE_RADIUS / np.linalg.norm(to)))
-        return done
+            d = np.subtract(CENTRE, s.xy)
+            d = d / max(np.linalg.norm(d), 1e-9)
+            mm = max(10.0, EDGE_MM + 10 - self._edge_mm(name, s))
+            print(f"reset: {name}, {self._edge_mm(name, s):.0f} mm from the frame: moving it {mm:.0f} mm in", flush=True)
+            if name == "rope":
+                self.rope_drag(0, tuple(d * mm * cf.MM))
+            else:
+                ways = [lambda: self.slide(name, d, mm), lambda: self.push(name, d, mm)]
+                if name == "slot":
+                    ways.reverse()
+                if name != "pan":
+                    ways.append(lambda: self.pick_place(name, self._free_spot(name)))
+                for way in ways:  # each with the object still on the glass (one given up may have moved it)
+                    if self._on_glass(name, say=False) is None or way():
+                        break
+            problems = self.scene_check()
+        return problems
+
+    def _edge_mm(self, name: str, s) -> float:
+        """How far (mm) `s` lies from the frame: its nearest point; for the rope its farthest point (scene check)."""
+        x0, y0, x1, y1 = cf.GLASS
+        p = np.atleast_2d(s.footprint_xy)
+        d = np.min([p[:, 0] - x0, x1 - p[:, 0], p[:, 1] - y0, y1 - p[:, 1]], axis=0) / cf.MM
+        return float(d.max() if name == "rope" else d.min())
 
     def scene_check(self) -> list[str]:
         """Is the scene fit for a play episode (Kei, 2026-11-27)? Parks the arm at PARK, looks again, and returns the
         problems, none when fit: every object accounted for, on the glass or a cube in the slot's notch; no rigid
         object within EDGE_MM of the frame; the rope only when all of it is (Kei: it is dragged from wherever along it
-        the tips fit, so a rope with any part well inside is fine). On problems the caller runs reset_objects once and
-        checks again, then stops for a person."""
+        the tips fit, so a rope with any part well inside is fine). On problems the caller runs reset_objects (it fixes
+        what is named here, checking again after each), then stops for a person if problems are left."""
         from cloudgripper_wm.perception.scene_tracker import INVENTORY  # here: that module loads torch
         if not (self.goto("scene check: up", z=1.0) and self.goto("scene check: park", x=PARK[0], y=PARK[1])):
             return ["could not park: the filter blocked the move"]
         states, problems = self.env.look_again(), []
-        x0, y0, x1, y1 = cf.GLASS
         for name in INVENTORY:
             s = states.get(name)
             if s is None or not (s.status == "on_glass" or (s.status == "stacked" and s.on == "slot" and getattr(s, "in_notch", False))):
                 problems.append(f"{name}: {'not tracked' if s is None else s.status + (' on ' + s.on if s.on else '')}")
             elif s.status == "on_glass":
-                p = np.atleast_2d(s.footprint_xy)
-                d = np.min([p[:, 0] - x0, x1 - p[:, 0], p[:, 1] - y0, y1 - p[:, 1]], axis=0) / cf.MM  # each point to the frame
-                edge = d.max() if name == "rope" else d.min()
+                edge = self._edge_mm(name, s)
                 if edge < EDGE_MM:
                     problems.append(f"{name}: {edge:.0f} mm from the frame (needs {EDGE_MM:.0f})")
         return problems
@@ -317,7 +353,7 @@ class Primitives:
         m = (EDGE_MM + 10) * cf.MM
         for _ in range(50):
             p = rng.uniform((x0 + m, y0 + m), (x1 - m, y1 - m))
-            if all(np.linalg.norm(o - p, axis=1).min() > FREE_MM * cf.MM for o in others):
+            if _clear_of(p, others, FREE_MM):
                 return p
         return None
 
@@ -360,6 +396,7 @@ class Primitives:
         also be clamped by its round part (20 mm) with the gripper opened to WIDE_OPEN (24.7 mm between the tips; 22.5
         at the usual open is too little) when no handle spot fits, as with the handle at the frame (Kei, 2026-11-27;
         prim_26). It does not lift that way (prim_27: rose 5 px), so a lifting grasp never takes it."""
+        self._lifted = None
         s = self._on_glass(name)
         if s is None:
             return False
@@ -476,7 +513,12 @@ class Primitives:
         return False
 
     def place(self, xy, tip_mm: float | None = None) -> bool:
-        """Carry what is held to tips position `xy`, lower (to the glass, or to tip_mm), let go, raise."""
+        """Carry what is held to tips position `xy`, lower (to the glass, or to tip_mm), let go, raise. xy None (no
+        free place): given up, what is held goes back where it was taken."""
+        if xy is None:
+            print("place: no free place", flush=True)
+            self._give_up("place")
+            return False
         rot = float(self.u._target_pos[3])
         if not self._run("place", [("carry", self._cmd(xy, rot))]):
             return False
@@ -490,6 +532,9 @@ class Primitives:
         return self.goto("place: up", z=1.0)
 
     def pick_place(self, name: str, xy) -> bool:
+        if xy is None:
+            print(f"pick_place {name}: no free place to put it, not tried", flush=True)
+            return False
         return self.grasp(name) and self.place(xy)
 
     def cube_into_slot(self, cube: str) -> bool:
@@ -568,7 +613,7 @@ class Primitives:
             ok = self.grasp("slot") and self.place(self._free_spot("slot"), tip_mm=cf.tip_mm(1.0))
         elif way == "swing":
             spot = self._free_spot("slot")
-            if not (self.grasp("slot", along_mm=SLOT_WALL_MM) and self.goto(f"{cube} out of slot (swing): carry", **self._cmd(spot, float(self.u._target_pos[3])))):
+            if spot is None or not (self.grasp("slot", along_mm=SLOT_WALL_MM) and self.goto(f"{cube} out of slot (swing): carry", **self._cmd(spot, float(self.u._target_pos[3])))):
                 return False
             r0 = float(self.u._target_pos[3])
             for k in range(SWINGS):  # 90 deg each way, in steps of the play step limit

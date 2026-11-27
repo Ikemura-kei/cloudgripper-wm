@@ -730,10 +730,17 @@ per-axis step limit `constants.PLAY_MAX_DELTA` (x, y 0.1; height 0.25; rotation 
 the world model uses; the collision filter judges every step; a blocked move gives the primitive up (arm to the top height, returns False) and the caller
 picks the next one. Written for cell 20; heights, approach distance and waiting times are first guesses.
 
-- `reset_objects` brings objects far from the glass centre back: each rigid object is picked up and put on a free
-  spot, or pushed when no grasp fits; the rope is dragged. A pan with its handle towards a frame and its round part
-  near it, and a slot with its long side against the low-x or low-y frame, stay where they are (no grasp fits and
-  the arm's range, 0.05 to 0.95, ends at the glass edge on the low sides, so nothing gets behind them).
+- `reset_objects` makes the scene fit with as little moving as possible (Kei, 2026-11-27, after prim_28): only the
+  objects `scene_check` names, one at a time, the scene checked again after each; it returns the problems left. A
+  rigid object is moved just clear of the frame (EDGE_MM + 10 mm, towards the centre): slid, else pushed, else
+  carried to a free spot; the slot is pushed first (Kei); the pan is never carried (by its handle it tilts, the
+  round part being the heavy end). The rope is dragged in. Objects not on the glass stay a problem (a person).
+  prim_28, the old reset (everything more than 21 mm from the centre carried there): the pan tilted, the slot and
+  rope were pushed to the frame, and the white cube was put on the pan.
+- `_free_spot` measures to the whole outline (corners only put that cube by the pan's edge) and returns None when no
+  place is free; `pick_place` and `place` then give up. Given up while holding: at the bottom it lets go where it is,
+  higher up it puts the object back where it was taken (after the drop check); dropping from the top height is the
+  last resort (prim_28 dropped the cube onto the pan).
 - `grasp` takes a cube by two sides, the slot across its 15 mm width on one of its walls and the pan by its handle (tried 15.5, 13 and 11 mm out from the round part's
   centre). A clamp (`grasp(lift=False)`, used by `slide`) may also take the pan's 20 mm round part when no handle spot
   fits (handle at the frame, prim_26), with the gripper opened to `WIDE_OPEN` 1.0 (24.7 mm between the tips; 22.5 at
