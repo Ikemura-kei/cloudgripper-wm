@@ -54,10 +54,6 @@ def prim():
         top, base = look["pics"]()
         return top, cv2.cvtColor(base, cv2.COLOR_BGR2RGB), u._target_pos.copy()
     u._observe = observe
-    def get_state():  # the robot reports where it was sent
-        t = u._target_pos
-        return dict(x_norm=t[0], y_norm=t[1], z_norm=t[2], rotation=round(t[3] * 180), claw_norm=t[4], claw_current="-0.05"), 0
-    u.robot.get_state = get_state
     p = Primitives(env)
     p.scene, p.look = scene, look
     yield p

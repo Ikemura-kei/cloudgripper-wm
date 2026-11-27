@@ -768,7 +768,7 @@ healthy robot: every axis both ways at the top height around x 0.5, y 0.5, rotat
 half-open and closed; then down to 0.35 at the first of `LOW_SPOTS` the filter calls free. It judges the gripper's
 yellow block (fixed anchor, does not rotate) and claw in the top view and the yellow in the base view against the
 reference with a few px of slack, the block's bottom-edge angle (tilt: a broken gripper hangs about 30 deg off), the
-blue frame in the base view (camera moved), fresh pictures (the env reuses the last frame when a fetch fails) and the
-reported pose. Motor currents are not judged (Kei: never used). Limits come from the five 2026-11-26 pictures.
+blue frame in the base view (camera moved) and fresh pictures (the env reuses the last frame when a fetch fails).
+The reported state is not used (x, y trailed the arm, 2026-11-23), nor the motor currents (Kei: never used). Limits come from the five 2026-11-26 pictures.
 `scripts/self_check.py --out DIR --ref REF [--record]` runs it (exit 0 pass, 1 fail, 2 blocked by the scene);
 `tests/test_self_check.py`. Not yet run on the robot; no reference recorded yet.

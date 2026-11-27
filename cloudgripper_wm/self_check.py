@@ -1,8 +1,8 @@
 """Self-check of a play cell before and during data collection (Kei, 2026-11-27). MOVES THE ROBOT.
 
 The arm visits a fixed list of poses (`_plan`) through the filtered env like every other move, never below height
-LOW_Z (Kei). At each pose it takes both pictures and the robot's reported state, and compares them with a reference
-recorded on the healthy robot at the same pose:
+LOW_Z (Kei). At each pose it takes both pictures and compares them with a reference recorded on the healthy robot
+at the same pose:
 - every axis got there and the gripper looks as it did: in the top view, the yellow block (the gripper's fixed
   anchor; it moves with x, y and height, not with the rotation) and the claw under it (the finger linkages; the
   cable's thin yellow stripe is opened away); in the base view, all the yellow. Each mask must lie within NEAR_PX
@@ -12,9 +12,9 @@ recorded on the healthy robot at the same pose:
 - the base camera was not moved: the blue frame lies within FRAME_PX of the reference's (a moved top camera shows
   as the block off at every pose);
 - the cameras deliver: no picture is the same array as the previous pose's (the env reuses the last frame when a
-  fetch fails, which looks like an arm that did not move);
-- the robot reports the commanded pose (catches an ignored command; a slipped belt shows only in the pictures).
-Motor currents are kept in the reference's poses.json with the rest of the state, not judged (Kei: never used).
+  fetch fails, which looks like an arm that did not move).
+The robot's reported state is not used: its x, y trailed the arm by up to a minute (2026-11-23, CloudGripper tab),
+and its motor currents were never used (Kei).
 
 Measured on the 2026-11-26 pictures (same pose, top height, 6 px slack): claw same state 0.98 to 1.0, half-open
 against closed 0.81, open against closed 0.19; base frame 0.986, shifted by 3 px 0.89, by 5 px 0.70.
@@ -38,7 +38,6 @@ YELLOW, BLUE = ((18, 120, 120), (35, 255, 255)), ((100, 150, 50), (130, 255, 255
 NEAR_PX, NEAR_MIN = 6, 0.92
 FRAME_PX, FRAME_MIN = 2, 0.95
 TILT_DEG = 5.0
-POSE_TOL = 0.01        # reported against commanded, in the env's units (rotation 0.01 = 1.8 deg)
 
 
 def _mask(img, hsv_range) -> np.ndarray:
@@ -132,20 +131,19 @@ def self_check(prim, ref, out=None, record: bool = False) -> tuple[str, list[str
             prim._give_up("self-check")
             return "blocked", lines + [f"the filter blocked '{label}': the scene is in the way, not a robot fault"]
         top, base, _ = u._observe()
-        state, _ = (u.robot.get_state_ws if u.use_ws else u.robot.get_state)()
-        recs.append((label, cmd, top, cv2.cvtColor(base, cv2.COLOR_RGB2BGR), state))
+        recs.append((label, cmd, top, cv2.cvtColor(base, cv2.COLOR_RGB2BGR)))
     if record:
         ref.mkdir(parents=True, exist_ok=True)
-        for label, _, top, base, _ in recs:
+        for label, _, top, base in recs:
             cv2.imwrite(str(ref / f"{label}_top.jpg"), top)
             cv2.imwrite(str(ref / f"{label}_base.jpg"), base)
-        (ref / "poses.json").write_text(json.dumps([dict(label=l, cmd=c, state=s) for l, c, _, _, s in recs], indent=1, default=float))
+        (ref / "poses.json").write_text(json.dumps([dict(label=l, cmd=c) for l, c, _, _ in recs], indent=1, default=float))
         return "recorded", lines + [f"{len(recs)} poses saved to {ref} (low spots {[LOW_SPOTS[i] for i in spots]})"]
 
     if out:
         Path(out).mkdir(parents=True, exist_ok=True)
     fails, prev = [], None
-    for k, (label, cmd, top, base, state) in enumerate(recs):
+    for k, (label, _, top, base) in enumerate(recs):
         rtop, rbase = cv2.imread(str(ref / f"{label}_top.jpg")), cv2.imread(str(ref / f"{label}_base.jpg"))
         m, r = _measure(top, base), _measure(rtop, rbase)
         near = {key: _near(m[key], r[key], NEAR_PX) for key in ("block", "claw", "base")} | {"frame": _near(m["frame"], r["frame"], FRAME_PX)}
@@ -154,12 +152,6 @@ def self_check(prim, ref, out=None, record: bool = False) -> tuple[str, list[str
             bad.append(f"block edge at {m['tilt']:+.1f} deg, reference {r['tilt']:+.1f}")
         if prev is not None and (np.array_equal(top, prev[0]) or np.array_equal(base, prev[1])):
             bad.append("same picture as the pose before (camera frozen or fetch failed)")
-        if state is None:
-            bad.append("no state from the robot")
-        else:
-            got = np.array([float(state[k]) for k in ("x_norm", "y_norm", "z_norm", "rotation", "claw_norm")]) / [1, 1, 1, 180, 1]
-            if np.abs(got - cmd).max() > POSE_TOL:
-                bad.append(f"robot reports {np.round(got, 3).tolist()} for {np.round(cmd, 3).tolist()}")
         lines.append(f"{label:14s} " + "  ".join(f"{key} {v:.3f}" for key, v in near.items()) + f"  tilt {m['tilt']:+.1f} (ref {r['tilt']:+.1f})")
         fails += [f"{label}: {b}" for b in bad]
         prev = top, base
