@@ -840,7 +840,8 @@ frame 0.1 px, tilt 0.3 deg off; stuck axes simulated from the reference pictures
 ## Play collection (`cloudgripper_wm/play.py`)
 
 Unattended play-data collection (Kei, 2026-11-27): episodes of 3 to 6 primitives from `random_primitive`, no new
-primitive after 300 recorded steps; the scene check before each episode (reset once, then stop for a person); the
+primitive after 300 recorded steps; the scene check before each episode (reset once; then stop for a person if an
+object is missing or off the glass, while one still near the frame is logged and play goes on, Kei 2026-11-27); the
 self-check at the start, every 15 episodes and after a surprise (`Primitives.surprise`: not lifted, dropped, closed
 on nothing), once more on failure, then stop. A stop raises the arm, opens the gripper and returns the reason. Only
 the primitives' steps are recorded. `scripts/data/collect_play.py --out SESSION --episodes N [--seed S] [--no-window]`

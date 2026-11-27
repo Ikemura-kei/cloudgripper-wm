@@ -6,7 +6,8 @@
 
 An episode is 3 to 6 primitives drawn by `Primitives.random_primitive` (fewer when the scene allows none); no new
 primitive starts once MAX_STEPS steps are recorded (one under way finishes). Before each episode the scene check
-runs; when it fails, `reset_objects` (it fixes the named objects, checking after each), else the collection stops for a person. The
+runs; when it fails, `reset_objects` (it fixes the named objects, checking after each); if an object is still missing or
+off the glass the collection stops for a person, one still near the frame is logged and play goes on. The
 self-check runs at the start, every CHECK_EVERY episodes and after a surprise (`Primitives.surprise`); a failed one
 runs once more, and a second failure stops the collection. A stop raises the arm, opens the gripper and returns the
 reason. Only the primitives' steps are recorded; parking, checks and resets between episodes are not.
@@ -137,8 +138,11 @@ def collect(prim, rec: Recorder, out, episodes: int, rng, check=None, check_ever
             log("scene_check", episode=ep, problems=problems)
             problems = prim.reset_objects()  # fixes the named objects, checking the scene after each
             log("reset", episode=ep, problems_left=problems)
-            if problems:
-                return stop("scene not fit after a reset: " + "; ".join(problems))
+            # only what needs a person stops it: an object missing or off the glass. One left near the frame is logged
+            # and play goes on (Kei, 2026-11-27: play_1 stopped on the pan 9 mm from the frame, limit 10)
+            hard = [p for p in problems if "mm from the frame" not in p]
+            if hard:
+                return stop("scene not fit after a reset: " + "; ".join(hard))
         rec.start(ep)
         k = int(rng.integers(EPISODE_PRIMITIVES[0], EPISODE_PRIMITIVES[1] + 1))
         log("episode", episode=ep, primitives=k)

@@ -73,6 +73,10 @@ def test_collect(setup):
     # a self-check that fails twice stops, arm up and gripper open
     assert collect(prim, rec, out, 1, np.random.default_rng(3), check=lambda p, ref=None, out=None: ("fail", ["bad"])).startswith("self-check failed twice")
     assert prim.u._target_pos[2] == 1.0 and np.isclose(prim.u._target_pos[4], prim.open)
+    # an object the reset cannot bring away from the frame (the mock scene does not move): logged, play goes on
+    scene["cube_white"] = _obj(cf.GLASS[0] + 5 * cf.MM, 0.6, 15, 15)
+    assert collect(prim, rec, out, 1, np.random.default_rng(5), check=check) == "done"
+    assert json.loads((out / "session.jsonl").read_text().splitlines()[-1])["event"] == "episode_end"
     # a scene the reset cannot fix stops before the episode
     scene["pan"] = SimpleNamespace(status="unaccounted", on=None, height_mm=7, inferred_xy=None, footprint_xy=None)
     n = len(list((out / "episodes").glob("ep_*")))
