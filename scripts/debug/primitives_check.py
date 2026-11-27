@@ -10,6 +10,7 @@
 
 A PRIMITIVE is a name with its arguments after colons; they run in the order given, after one env reset (arm up,
 then home):
+  scene_check                    is the scene fit for an episode? (park at the far side, look, list the problems)
   reset                          bring objects that are far from the glass centre back towards it
   push:pan:1,0:30                push the pan 30 mm along robot (x, y) = (1, 0)
   pick_place:cube_white:0.4,0.5  grasp the white cube and put it down at x 0.4, y 0.5
@@ -57,7 +58,7 @@ def parse(spec):
 
 assert parse("push:pan:1,0:30") == ("push", ["pan", (1.0, 0.0), 30.0]) and parse("rope_drag:0:0.1,0") == ("rope_drag", [0, (0.1, 0.0)])
 todo = [parse(s) for s in a.primitives]
-unknown = [n for n, _ in todo if n not in ("reset_objects", "push", "pick_place", "cube_into_slot", "cube_out_of_slot", "rope_drag")]
+unknown = [n for n, _ in todo if n not in ("scene_check", "reset_objects", "push", "pick_place", "cube_into_slot", "cube_out_of_slot", "rope_drag")]
 if unknown:
     sys.exit(f"unknown primitive(s): {unknown}")
 
@@ -77,7 +78,9 @@ try:
     prim = Primitives(env, on_step=view.show)
     for (name, args), spec in zip(todo, a.primitives):
         result = getattr(prim, name)(*args)
-        print(f"== {spec}: {result if isinstance(result, dict) else 'done' if result else 'GIVEN UP'}", flush=True)
+        if isinstance(result, list):  # scene_check: the problems
+            result = "fit" if not result else "NOT FIT: " + "; ".join(result)
+        print(f"== {spec}: {result if isinstance(result, (dict, str)) else 'done' if result else 'GIVEN UP'}", flush=True)
 finally:
     view.close(save_pose=not a.mock)
     print(f"{env.n_blocked} of {env.n_steps} steps blocked, {time.time() - t0:.0f} s in all; arm left at {env.unwrapped._target_pos}")

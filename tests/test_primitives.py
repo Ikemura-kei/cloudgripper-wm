@@ -9,7 +9,7 @@ from cloudgripper_wm.envs.cloudgripper_env import CloudGripperEnv
 from cloudgripper_wm.envs.constants import PLAY_MAX_DELTA
 from cloudgripper_wm.envs.filtered_wrapper import FilteredCloudGripperWrapper
 from cloudgripper_wm.envs.robot_pool import RobotPool
-from cloudgripper_wm.primitives import NOTCH_PUSH_TRIES, Primitives, z_for_tip
+from cloudgripper_wm.primitives import NOTCH_PUSH_TRIES, PARK, Primitives, z_for_tip
 
 
 def _obj(x, y, w_mm, h_mm, l_mm=None):
@@ -241,3 +241,16 @@ def test_grasp_checks_the_lift_and_place_checks_for_a_drop(prim):
     assert not prim.place((0.6, 0.5)) and prim.env.held == []
     assert not any(l.startswith("place: down") for l, _ in prim.log[n:])
 
+
+
+def test_scene_check(prim):
+    """Fit: every object on the glass or a cube in the notch, none at the frame. The arm looks from PARK."""
+    prim.scene.update(cube_blue=_obj(0.4, 0.4, 15, 15), cube_white=_obj(0.5, 0.6, 15, 15), slot=_obj(0.6, 0.4, 15, 16, 25.5),
+                      pan=_obj(0.35, 0.6, 20, 7), rope=_obj(0.45, 0.3, 60, 8, 8))
+    assert prim.scene_check() == [] and np.allclose(prim.u._target_pos[:3], (*PARK, 1.0))
+    prim.scene["cube_blue"] = SimpleNamespace(status="stacked", on="slot", in_notch=True, height_mm=15, inferred_xy=None)
+    assert prim.scene_check() == []
+    prim.scene["cube_white"] = _obj(0.05, 0.5, 15, 15)  # against the low-x frame
+    prim.scene["pan"] = SimpleNamespace(status="unaccounted", on=None, height_mm=7, inferred_xy=None)
+    prim.scene["cube_blue"].in_notch = False  # on the slot's wall, not in the notch
+    assert [p.split(":")[0] for p in prim.scene_check()] == ["cube_blue", "cube_white", "pan"]

@@ -61,6 +61,10 @@ RECLOSE_EASE = 0.05         # grasp: after closing, open this much and close aga
 LIFT_RISE_PX = 40           # grasp: a lifted object rises at least this much in the top view (the slot rose ~100 px)
 DROP_PX = 50                # before lowering: a held object this far from where the carry should have put it was dropped
 FREE_MM = 22.0             # reset: a cube is put down at least this far from every other object's outline
+PARK = (0.5, 0.95)         # scene check: the arm looks from here at the top height, above the glass's far edge in the
+                           # top view and over the frame from below: it hides nothing on the glass in either view
+EDGE_MM = 10.0             # scene check: closest a rigid object (or the rope's centre) may lie to the frame.
+                           # ponytail: first guess (a tip is 5 mm, plus the filter's margins); tune in supervised runs
 
 
 def z_for_tip(mm: float) -> float:
@@ -269,6 +273,28 @@ class Primitives:
             if np.linalg.norm(to) > CENTRE_RADIUS:
                 done["rope"] = self.rope_drag(i, to * (1 - CENTRE_RADIUS / np.linalg.norm(to)))
         return done
+
+    def scene_check(self) -> list[str]:
+        """Is the scene fit for a play episode (Kei, 2026-11-27)? Parks the arm at PARK, looks again, and returns the
+        problems, none when fit: every object accounted for, on the glass or a cube in the slot's notch; no rigid
+        object within EDGE_MM of the frame, and not the rope's centre either (the rope is dragged from wherever along
+        it the tips fit, so an end at the frame is fine). On problems the caller runs reset_objects once and checks
+        again, then stops for a person."""
+        from cloudgripper_wm.perception.scene_tracker import INVENTORY  # here: that module loads torch
+        if not (self.goto("scene check: up", z=1.0) and self.goto("scene check: park", x=PARK[0], y=PARK[1])):
+            return ["could not park: the filter blocked the move"]
+        states, problems = self.env.look_again(), []
+        x0, y0, x1, y1 = cf.GLASS
+        for name in INVENTORY:
+            s = states.get(name)
+            if s is None or not (s.status == "on_glass" or (s.status == "stacked" and s.on == "slot" and getattr(s, "in_notch", False))):
+                problems.append(f"{name}: {'not tracked' if s is None else s.status + (' on ' + s.on if s.on else '')}")
+            elif s.status == "on_glass":
+                p = np.atleast_2d(s.xy if name == "rope" else s.footprint_xy)
+                edge = min((p[:, 0] - x0).min(), (x1 - p[:, 0]).min(), (p[:, 1] - y0).min(), (y1 - p[:, 1]).min()) / cf.MM
+                if edge < EDGE_MM:
+                    problems.append(f"{name}: {edge:.0f} mm from the frame (needs {EDGE_MM:.0f})")
+        return problems
 
     def grasp(self, name: str, make_room: bool = True, along_mm: float | None = None) -> bool:
         """Open, go down around `name`, close, lift. A cube is taken with the tips along one of its sides, the pan

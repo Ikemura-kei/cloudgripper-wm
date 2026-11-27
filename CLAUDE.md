@@ -752,6 +752,11 @@ picks the next one. Written for cell 20; heights, approach distance and waiting 
   down: the notch floor is 5 mm up and a seated cube's top (15 mm) is below the walls (16 mm). Then the
   arm goes home and `look_again()` (the wrapper's refresh) says whether the cube is on the glass: a step alone keeps
   a cube that left the slot "stacked on slot".
+- `scene_check()` (Kei, 2026-11-27): is the scene fit for an episode? Parks at `PARK` (0.5, 0.95, top height: above
+  the glass's far edge in the top view, over the frame from below, so it hides nothing), looks again and lists the
+  problems: an object neither on the glass nor a cube in the slot's notch; a rigid object (or the rope's centre)
+  within `EDGE_MM` (10 mm, first guess) of the frame. The collection runs reset_objects once on problems, checks
+  again, then stops for a person. Runs in primitives_check.py as `scene_check`. Not yet run on the robot.
 - Not written yet: the rope into and out of the slot.
 - `tests/test_primitives.py` runs the sequences on the mock robot. `scripts/debug/primitives_check.py --out DIR
   reset push:pan:1,0:30 ...` is the supervised live run (window + video; `--mock` for a dry run).
