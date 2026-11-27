@@ -58,6 +58,9 @@ COLOUR = {  # name: {view: [(hsv low, hsv high), ...]}
 HIDDEN_KEEP_PX = 12  # an object on the glass that vanishes from below keeps its place while its top-view mask stays
                      # within this of where it was when last seen from below
 IN_NOTCH_FRAC = 0.8  # share of a cube's top-view mask inside the slot's outline for it to count as in the notch
+NOTCH_RED_REACH_PX = 60  # slot-red pixels this near the slot's mask count as the slot (its other wall). prim_29: seen
+                         # along the notch, the back wall lay over 20 px (the old reach) above the front one, the
+                         # outline was the front wall alone and a seated cube scored 0.21; from 40 px it scores 1.00
 AREA_PX = {"cube": (1050, 3200), "slot": (4300, 10500), "pan": (4300, 5900)}  # kind: (base view, top view)
 AREA_TOL = (0.35, 2.5)  # a colour region or a mask outside these multiples of AREA_PX is not that object
 SIZE_TOL, SOLIDITY_TOL = 0.15, 0.05  # how far a mask may be from its template
@@ -585,7 +588,8 @@ class SceneTracker:
                     # inside the slot's convex outline; one leaning against the slot mostly outside it
                     # The slot's mask is cut to one piece: seen along its notch, the front wall can split it from the
                     # back wall (2026-11-26). Its red near the mask counts too, so the outline spans both walls.
-                    near = cv2.dilate(top_seen["slot"].astype(np.uint8), np.ones((41, 41), np.uint8)).astype(bool)
+                    k = 2 * NOTCH_RED_REACH_PX + 1
+                    near = cv2.dilate(top_seen["slot"].astype(np.uint8), np.ones((k, k), np.uint8)).astype(bool)
                     red = np.zeros(near.shape, bool)
                     for lo, hi in COLOUR["slot"]["top"]:
                         red |= cv2.inRange(self._top_hsv, lo, hi).astype(bool)
