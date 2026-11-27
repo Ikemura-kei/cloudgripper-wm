@@ -88,6 +88,9 @@ def test_cube_hidden_from_below_keeps_its_place():
     assert s0.status == "on_glass"
     s1 = see(False, 404)  # hidden from below, top view about the same: kept, same footprint
     assert s1.status == "on_glass" and np.allclose(s1.footprint_xy, s0.footprint_xy)
+    # the fingers cover most of its top (play_1 episode 3): the visible part moved 14 px but lies where it was: kept
+    tr.top.masks["cube_white"] = sq((720, 1280), 400, 600, 40) & (np.arange(1280) < 612)[None, :]
+    assert tr._update()["cube_white"].status == "on_glass"
     assert see(False, 410).status == "on_glass"
     assert see(False, 416).status != "on_glass"  # crept 16 px from where it was last seen from below: no longer trusted
     assert see(False, 300).status != "on_glass"  # lifted
@@ -116,5 +119,11 @@ def test_cube_in_the_notch_hidden_from_above_stays():
     tr.top.masks["cube_blue"] = np.zeros((720, 1280), bool)  # the arm over the slot
     s1 = tr._update()["cube_blue"]
     assert s1.status == "stacked" and s1.in_notch and s1.inferred_xy == s0.inferred_xy
+    # one picture puts it elsewhere (the arm near the slot): kept, in doubt; a second one in a row is believed
+    tr.top.masks["cube_blue"] = sq((720, 1280), 600, 900, 40)
+    s2 = tr._update()["cube_blue"]
+    assert s2.status == "stacked" and s2.in_notch and s2.doubt
+    assert not tr._update()["cube_blue"].in_notch
+    tr.top.masks["cube_blue"] = np.zeros((720, 1280), bool)
     tr.base.masks["slot"] = sq((480, 640), 260, 300, 56, 86)  # the slot has moved
     assert tr._update()["cube_blue"].status == "unaccounted"

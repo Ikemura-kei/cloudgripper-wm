@@ -57,6 +57,8 @@ COLOUR = {  # name: {view: [(hsv low, hsv high), ...]}
 }
 HIDDEN_KEEP_PX = 12  # an object on the glass that vanishes from below keeps its place while its top-view mask stays
                      # within this of where it was when last seen from below
+HIDDEN_INSIDE = 0.95  # ... or while this share of it lies within that mask (+4 px): the arm covers part of it (play_1
+                      # episode 3: fingers 3 mm from the white cube hid half of its top, the centre moved 15 px)
 NOTCH_KEEP_IOU = 0.8  # a cube in the notch hidden from above stays there while the slot's base mask overlaps its last this much
 IN_NOTCH_FRAC = 0.8  # share of a cube's top-view mask inside the slot's outline for it to count as in the notch
 NOTCH_RED_REACH_PX = 60  # slot-red pixels this near the slot's mask count as the slot (its other wall). prim_29: seen
@@ -102,6 +104,8 @@ class ObjectState:
     inferred_xy: tuple[float, float] | None = None  # the same in robot x, y (rough: an obstacle for the filter, not a measurement)
     inferred_angle_deg: float | None = None  # its in-plane angle in the base view, where known (a cube in the slot)
     top_ref: np.ndarray | None = None  # top-view mask centre when it was last seen from below (on_glass)
+    top_ref_mask: np.ndarray | None = None  # ... and that top-view mask (bool (720, 1280))
+    doubt: bool = False  # kept in the slot's notch against this picture; a second such picture is believed
     in_notch: bool = False  # stacked on the slot and, in the top view, inside the slot's outline: in its notch
     mask_base: np.ndarray | None = None  # bool (480, 640), None if never prompted in this view
     mask_top: np.ndarray | None = None  # bool (720, 1280)
@@ -113,7 +117,7 @@ def save_states(path, states: dict) -> None:
     meta, arrays = {}, {}
     for n, s in states.items():
         d = dict(vars(s))
-        for v in ("mask_base", "mask_top"):
+        for v in ("mask_base", "mask_top", "top_ref_mask"):
             m = d.pop(v, None)
             if m is not None:
                 arrays[f"{n}.{v}"], d[f"{v}_shape"] = np.packbits(m), m.shape
@@ -126,7 +130,7 @@ def load_states(path) -> dict[str, dict]:
     z = np.load(path)
     out = json.loads(str(z["meta"]))
     for n, d in out.items():
-        for v in ("mask_base", "mask_top"):
+        for v in ("mask_base", "mask_top", "top_ref_mask"):
             if f"{n}.{v}" in z:
                 shape = d[f"{v}_shape"]
                 d[v] = np.unpackbits(z[f"{n}.{v}"])[:shape[0] * shape[1]].reshape(shape).astype(bool)
@@ -553,13 +557,17 @@ class SceneTracker:
             full = 2000 if name == "rope" else RIGID[kind][0] * RIGID[kind][1]
             s = ObjectState(name, "unaccounted", height_mm=h, mask_base=mb, mask_top=mt)
             prev = self.states.get(name)
+            ref = getattr(prev, "top_ref_mask", None)
+            covered = ref is not None and name in top_seen and \
+                (mt & cv2.dilate(ref.astype(np.uint8), np.ones((9, 9), np.uint8)).astype(bool)).sum() >= HIDDEN_INSIDE * mt.sum()
             hidden = (name != "rope" and (mb is None or mb.sum() < 0.3 * full) and prev is not None and prev.status == "on_glass"
-                      and name in top_seen and prev.top_ref is not None
-                      and np.linalg.norm(np.argwhere(mt).mean(0) - prev.top_ref) < HIDDEN_KEEP_PX)
+                      and name in top_seen and (covered or (prev.top_ref is not None
+                                                            and np.linalg.norm(np.argwhere(mt).mean(0) - prev.top_ref) < HIDDEN_KEEP_PX)))
             ms, ms_prev = self.base.masks.get("slot"), getattr(self.states.get("slot"), "mask_base", None)
-            notch_hidden = (name.startswith("cube") and name not in top_seen and (mb is None or mb.sum() < 0.3 * full)
+            was_in_notch = (name.startswith("cube") and (mb is None or mb.sum() < 0.3 * full)
                             and prev is not None and prev.status == "stacked" and prev.on == "slot" and getattr(prev, "in_notch", False)
                             and ms is not None and ms_prev is not None and (ms & ms_prev).sum() >= NOTCH_KEEP_IOU * (ms | ms_prev).sum() > 0)
+            notch_hidden = was_in_notch and name not in top_seen
             if notch_hidden:
                 # in the slot's notch a moment ago, now gone from the top view (the only one that sees it there) and the
                 # slot unmoved from below: the arm over the slot hides it (play_1 episode 2, 2026-11-27: "unaccounted"
@@ -572,9 +580,11 @@ class SceneTracker:
                 # 2026-11-26: the white cube turned "off_glass" under the open tips and the grasp was refused). Keep it
                 # where it was. A lifted or pushed object moves in the top view and falls through to the rules below.
                 s.status, s.xy, s.footprint_xy, s.angle_deg, s.top_ref = "on_glass", prev.xy, prev.footprint_xy, prev.angle_deg, prev.top_ref
+                s.top_ref_mask = prev.top_ref_mask
             elif mb is not None and mb.sum() >= 0.3 * full:
                 s.status = "on_glass"
                 s.top_ref = np.argwhere(mt).mean(0) if name in top_seen else None  # compared against while hidden from below
+                s.top_ref_mask = mt if name in top_seen else None
                 c = max(cv2.findContours(mb.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0], key=cv2.contourArea)
                 (cx, cy), _, ang = cv2.minAreaRect(c)
                 poly = cv2.approxPolyDP(c, 2.0, True).reshape(-1, 2)
@@ -617,6 +627,13 @@ class SceneTracker:
                 else:
                     s.inferred_px = tuple(b[0])
                 s.inferred_xy = tuple(float(v) for v in self._px_to_xy([s.inferred_px])[0])
+            if was_in_notch and name in top_seen and not (s.status == "stacked" and s.on == "slot" and s.in_notch) and not prev.doubt:
+                # one picture says it left the notch while the slot has not moved and nothing sees it on the glass:
+                # kept for this picture (play_1 episode 3: for one frame the arm near the slot made the blue cube
+                # "stacked on pan", the pan grew by a cube and a push was refused); a second in a row is believed (a
+                # refresh looks twice)
+                s.status, s.on, s.in_notch, s.doubt = "stacked", "slot", True, True
+                s.inferred_px, s.inferred_xy, s.inferred_angle_deg = prev.inferred_px, prev.inferred_xy, prev.inferred_angle_deg
             self.states[name] = s
         return self.states
 
