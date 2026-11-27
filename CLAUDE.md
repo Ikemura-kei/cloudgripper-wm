@@ -729,6 +729,11 @@ offset with a fixed and a turning part, tip heights). Every constant is in the f
 per-axis step limit `constants.PLAY_MAX_DELTA` (x, y 0.1; height 0.25; rotation 0.25; gripper 0.75), the interface
 the world model uses; the collision filter judges every step; a blocked move gives the primitive up (arm to the top height, returns False) and the caller
 picks the next one. Written for cell 20; heights, approach distance and waiting times are first guesses.
+In play (`Primitives.rng`, set by `collect`; Kei, 2026-11-27: varied actions for the world model) each move draws its
+step limit (0.3 to 1 times the env's, `STEP_SCALE`), each step's moving axes are scaled by 1 +- 0.2 (the last step
+lands on the target), and neighbouring moves at the top height on different axes (gripper, turn, x/y) are merged half
+the time, never into a height change. Larger steps than `PLAY_MAX_DELTA` need the env's limit raised. Without rng
+(supervised runs, tests): equal steps, one axis group a move.
 
 - `reset_objects` makes the scene fit with as little moving as possible (Kei, 2026-11-27, after prim_28): only the
   objects `scene_check` names, one at a time, the scene checked again after each; it returns the problems left. A

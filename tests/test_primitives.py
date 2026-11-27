@@ -84,6 +84,28 @@ def test_push_over_the_rope(prim):
     assert plan[3] == PUSH_TIP_MM and not prim._push_fits("slot", plan)
 
 
+def test_play_varies_steps_and_merges_top_moves(prim):
+    """Play (rng set; Kei, 2026-11-27): step sizes vary from move to move and step to step, within the env's limits
+    (the fixture checks every action sent), each move still ends on its target; at the top height moves on different
+    axes are sometimes one, never one that changes the height."""
+    prim.rng, u = np.random.default_rng(0), prim.env.unwrapped
+    counts = []
+    for _ in range(6):
+        n = len(prim.log)
+        assert prim.goto("test: across", x=0.3, rot=0.2) and prim.goto("test: back", x=0.7, rot=0.6)
+        counts.append(len(prim.log) - n)
+        assert np.allclose(u._target_pos[[0, 3]], (0.7, 0.6), atol=1e-6)
+    assert len(set(counts)) > 2, counts
+    prim.scene.update(pan=_obj(0.3, 0.5, 20, 7))
+    labels = []
+    for _ in range(6):
+        prim.log.clear()
+        assert prim.push("pan", (1, 0), 30) and abs(u._target_pos[2] - 1.0) < 1e-6
+        labels += [l for l, _ in prim.log]
+    assert any(" + " in l for l in labels) and any(l == "push pan: close" for l in labels)
+    assert not any(" + " in l and ("up" in l or "down" in l) for l in labels), [l for l in labels if " + " in l]
+
+
 def test_objects_against_the_frame(prim):
     x0, _, x1, _ = cf.GLASS
     # high-x frame: the slot is pushed back from over the frame; the pan is too low to be caught from there

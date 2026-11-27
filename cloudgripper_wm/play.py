@@ -123,6 +123,7 @@ def collect(prim, rec: Recorder, out, episodes: int, rng, check=None, check_ever
                 return True
         return False
 
+    prim.rng = rng  # varied step sizes and merged moves (Primitives.goto, _run; Kei, 2026-11-27)
     first = len(list((out / "episodes").glob("ep_*")))
     log("session", episodes=episodes, first=first)
     due = "start"

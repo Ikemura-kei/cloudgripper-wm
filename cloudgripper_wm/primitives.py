@@ -74,6 +74,10 @@ EDGE_MM = 10.0             # scene check: closest a rigid object may lie to the 
 PLAY_WEIGHTS = dict(pick_place=2, cube_into_slot=2, cube_out_of_slot=2, push=1, rope_drag=1)  # play: kinds (Kei, 2026-11-27)
 PLAY_CARRY = ("cube_blue", "cube_white")  # play pick_place: cubes only until the slot and pan grasps have run supervised
 PLAY_PUSH_MM, PLAY_DRAG_MM = (10.0, 40.0), (10.0, 30.0)  # play: push and rope-drag distances, drawn uniformly
+# Play only (Primitives.rng set; Kei, 2026-11-27: varied actions for the world model): each move's step limit is this
+# fraction of the env's, drawn per move; each step's moving axes are scaled by 1 +- STEP_NOISE (the last step lands on
+# the target); moves at the top height on different axes are merged into one with probability MERGE_P.
+STEP_SCALE, STEP_NOISE, MERGE_P = (0.3, 1.0), 0.2, 0.5
 PUSH_CLEAR_MM = 5.0  # a push comes down at least this far from every object but the one it pushes. The filter's own
                      # margin (LOWER_MM, 1.5 mm, small so that open tips go down around a cube) let the closed tips onto
                      # the white cube's corner behind the pan (play_1, 2026-11-27). First guess
@@ -127,16 +131,19 @@ class Primitives:
         self.open, self.closed = self.u._gripper_range[1], self.u._gripper_range[0]
         self.surprise: str | None = None  # set when the cameras contradict the plan (not lifted, dropped, closed on
                                           # nothing): the collection runs a self-check next; the caller clears it
+        self.rng = None  # play sets it: varied step sizes and merged moves (STEP_SCALE); None: equal steps, one axis group a move
 
     # ------------------------------------------------------------------ moves
     def goto(self, label: str, x=None, y=None, z=None, rot=None, grip=None) -> bool:
-        """Move the named axes to absolute values, in equal delta steps within the env's per-axis limit, each
-        through the filter; False as soon as one step is blocked."""
+        """Move the named axes to absolute values, in equal delta steps within the env's per-axis limit (with `rng`:
+        a limit drawn per move and noisy steps), each through the filter; False as soon as one step is blocked."""
         target = np.array([v if v is not None else p for v, p in zip((x, y, z, rot, grip), self.u._target_pos)], np.float32)
         target[:2] = np.clip(target[0], *self.u._x_range), np.clip(target[1], *self.u._y_range)  # as the env will clip
-        n = int(np.ceil((np.abs(target - self.u._target_pos) / self.u.max_delta).max() - 1e-6))
-        for i in range(n, 0, -1):
-            delta = (target - self.u._target_pos) / i  # what is left, in i equal steps: ends exactly on target
+        limit = self.u.max_delta * (self.rng.uniform(*STEP_SCALE) if self.rng is not None else 1.0)
+        while (n := int(np.ceil((np.abs(target - self.u._target_pos) / limit).max() - 1e-6))) > 0:
+            delta = (target - self.u._target_pos) / n  # what is left, in n equal steps: the last ends exactly on target
+            if self.rng is not None and n > 1:
+                delta = np.clip(delta * self.rng.uniform(1 - STEP_NOISE, 1 + STEP_NOISE, 5), -self.u.max_delta, self.u.max_delta)
             # wait long enough for the arm to arrive before the next picture: the filter trusts the commanded pose
             wait, self.u.dwell_time = self.u.dwell_time, (0.5 + 4 * float(np.hypot(*delta[:2])) + 2 * abs(float(delta[2]))
                                                           + abs(float(delta[3])) + (0.5 if abs(delta[4]) > 1e-4 else 0)) * wait_scale(self.u)
@@ -153,6 +160,15 @@ class Primitives:
         return True
 
     def _run(self, name: str, moves: list[tuple[str, dict]]) -> bool:
+        if self.rng is not None:  # play: neighbouring moves at the top height on different axes, sometimes as one (the
+            merged, z = [], float(self.u._target_pos[2])  # tips are 27 mm up there: nothing to meet)
+            for label, kw in moves:
+                if merged and z >= 1.0 and "z" not in kw and "z" not in merged[-1][1] and not (kw.keys() & merged[-1][1].keys()) and self.rng.random() < MERGE_P:
+                    merged[-1] = (f"{merged[-1][0]} + {label}", {**merged[-1][1], **kw})
+                else:
+                    merged.append((label, kw))
+                z = kw.get("z", z)
+            moves = merged
         for label, kw in moves:
             if not self.goto(f"{name}: {label}", **kw):
                 self._give_up(name)
