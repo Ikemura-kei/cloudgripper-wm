@@ -486,3 +486,34 @@ def test_given_up_while_holding_puts_it_back(prim):
     assert "place: given up, back where it was taken" in labels and not any("dropping" in l for l in labels)
     i = labels.index("place: given up, back where it was taken")
     assert np.allclose(prim.env.unwrapped._target_pos[:2], taken) and prim.env.held == [] and "let go" in " ".join(labels[i:])
+
+
+def test_free_the_pan(prim):
+    """The pan 8.5 mm from the frame, its handle along it, the slot by the handle and the blue cube against the round
+    part (play_1 episode 10; Kei: clear the space near the pan first). The usual opening puts a tip on the frame and
+    the narrower ones have the slot in the way; with two neighbours against it no single push leaves room all round
+    (the old rule). The slot is pushed away from the handle spot first, then the handle is clamped with a narrower
+    opening and the pan slid in. Play offers the pan a slide; by the frame only one away from it."""
+    y0, u = cf.GLASS[1], prim.env.unwrapped
+    disc = np.array([0.33, y0 + 18.5 * cf.MM])
+    prim.scene.update(pan=_pan(*(disc + (3.4 * cf.MM, 0)), ang=-0.19),
+                      slot=_obj(disc[0] + 15 * cf.MM, disc[1] + 23 * cf.MM, 15, 16, 25.5),
+                      cube_blue=_obj(disc[0] - 2 * cf.MM, disc[1] + 19 * cf.MM, 15, 15))
+    push = prim.push
+    def push_moves(n, d, mm):  # the mock scene follows a push: the pushed outline moves
+        ok = push(n, d, mm)
+        s, v = prim.scene[n], np.asarray(d, float) / np.linalg.norm(d) * mm * cf.MM
+        s.footprint_xy, s.xy = s.footprint_xy + v, tuple(np.add(s.xy, v))
+        return ok
+    prim.push = push_moves
+    grips, step = [], prim.env.step
+    prim.env.step = lambda a: (grips.append(float(u._target_pos[4] + a[4])), step(a))[1]
+    assert prim.slide("pan", (0, 1), 12)
+    labels = [l for l, _ in prim.log]
+    assert labels.index("push slot: push") < labels.index("grasp pan: close") < labels.index("slide pan: slide")
+    assert prim.closed < max(grips[labels.index("push slot: up"):]) < prim.open  # a narrower opening on the handle
+    # play: the pan gets slides, and by the frame only away from it
+    rng = np.random.default_rng(0)
+    picks = [prim.random_primitive(rng) for _ in range(40)]
+    slides = [a for k, a in picks if k == "slide"]
+    assert slides and all(a[0] == "pan" and a[1][1] * a[2] > 6 for a in slides)

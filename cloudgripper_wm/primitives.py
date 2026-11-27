@@ -43,7 +43,10 @@ SLOT_DROP_MM = 3.0         # a cube is let go with the tips this far above the s
 EDGE_SHIFT_MM = 2.0        # grasping a cube that lies against the frame: the tips go this far towards the glass
 WIDE_OPEN = 1.0            # widest gripper command: 29.7 mm between tip centres, 24.7 mm between the tips (2026-11-27);
                            # only for the pan's 20 mm round part, the cell's range stays at 0.825 for everything else
-PAN_HANDLE_MM = (15.5, 13.0, 11.0)  # centre of the pan's round part to where the handle is held, tried in this order; Pan.stl: handle from 10 to 21 mm out
+PAN_HANDLE_MM = (15.5, 13.0, 11.0, 17.0)  # centre of the pan's round part to where the handle is held, tried in this order; Pan.stl: handle from 10 to 21 mm out
+PAN_HANDLE_OPEN = (0.6, 0.55)  # ... with the usual opening first, then these (21.8, 20.5 mm between tip centres; the 8 mm
+                   # handle needs about 18). The pan 8.5 mm from the frame (play_1 episodes 9-10): at the usual opening
+                   # the frame-side tip came down on the frame. At 7 mm (episode 11) nothing fits: a person
 ROOM_MM, ROOM_PUSH_MM = 8.0, 25.0  # clutter: push length, and the room around the object it must leave (a tip is 5 mm)
 ROPE_STEP_MM = 8.0  # rope drag: grasp points tried every this far along the rope, from the end inwards
 ROPE_OPEN = 0.45  # rope grasp: the gripper opens this far only (17.9 mm between tip centres, ~13 mm between the tips for an
@@ -76,7 +79,9 @@ PARK = (0.5, 0.95)         # scene check: the arm looks from here at the top hei
                            # top view and over the frame from below: it hides nothing on the glass in either view
 EDGE_MM = 10.0             # scene check: closest a rigid object may lie to the frame (the rope: some part of it farther).
                            # ponytail: first guess (a tip is 5 mm, plus the filter's margins); tune in supervised runs
-PLAY_WEIGHTS = dict(pick_place=2, cube_into_slot=2, cube_out_of_slot=2, push=1, rope_drag=1)  # play: kinds (Kei, 2026-11-27)
+PLAY_WEIGHTS = dict(pick_place=2, cube_into_slot=2, cube_out_of_slot=2, push=1, rope_drag=1, slide=2)  # play: kinds (Kei, 2026-11-27)
+PLAY_SLIDE = ("pan",)  # play slide (clamped where it lies, moved along the glass): the pan, the one object not carried (Kei,
+                       # 2026-11-27: play_1 never used it; by the frame it has no push, and contacts took it 10 -> 7 mm)
 PLAY_CARRY = ("cube_blue", "cube_white")  # play pick_place: cubes only until the slot and pan grasps have run supervised
 PLAY_PUSH_MM, PLAY_DRAG_MM = (10.0, 40.0), (10.0, 30.0)  # play: push and rope-drag distances, drawn uniformly
 # Play only (Primitives.rng set; Kei, 2026-11-27: varied actions for the world model): each move's step limit is this
@@ -314,13 +319,22 @@ class Primitives:
                                            ("behind it", self._cmd(start, rot)), ("down", dict(z=z_for_tip(tip))),
                                            ("push", self._cmd(end, rot)), ("up", dict(z=1.0))])
 
-    def _make_room(self, name: str, reasons=()) -> bool:
-        """A grasp of `name` found no room for the tips: push it, or a rigid neighbour, ROOM_PUSH_MM so that it ends
-        with ROOM_MM clear all round. Every push in eight directions is asked of the filter first; the one that
-        leaves most room is done. False (nothing moved) when none fits.
+    def _make_room(self, name: str, reasons=(), at=()) -> bool:
+        """A grasp of `name` found no room for the tips: `reasons`, the filter's, one for each grasp spot `at` (tips'
+        midpoint). First the spot with the fewest objects in the way, none of them the frame or `name`: each is moved
+        away from it (`_move_away`; Kei, 2026-11-27: clear the space near the pan first; play_1 episodes 9-10: the slot
+        on the pan's handle and the blue cube against both, a single push freed no spot). Else: push `name`, or a rigid
+        neighbour, ROOM_PUSH_MM so that it ends with ROOM_MM clear all round. Every push in eight directions is asked
+        of the filter first; the one that leaves most room is done. False (nothing moved) when none fits.
 
         ponytail: the room afterwards is predicted by shifting the pushed outline only; what it pushes along is
         ignored, and the rope is never the one moved. Two objects that touch usually leave no push that fits."""
+        ways = [(len(b), i, b) for i, r in enumerate(reasons) if "lowering onto " in r and i < len(at)
+                for b in [r.split("lowering onto ", 1)[1].split(", ")] if not {"the frame", name} & set(b)]
+        if ways:
+            _, i, b = min(ways)
+            if any([self._move_away(n, at[i]) for n in b]):  # a list: every one is tried
+                return True
         if any("rope" in r for r in reasons) and self._on_glass("rope", say=False) is not None:
             # the rope under the tips: drag its part nearest the object away first (Kei, 2026-11-27: clear the space
             # near the pan; play_1 episode 9 stopped with the pan 9 mm from the frame and the rope against it)
@@ -347,6 +361,29 @@ class Primitives:
             return False
         print(f"grasp {name}: making room by pushing {best[1][0]}", flush=True)
         return self.push(best[1][0], best[1][1], ROOM_PUSH_MM)
+
+    def _move_away(self, name: str, q) -> bool:
+        """Push `name` ROOM_PUSH_MM away from point q (the rope: drag it), straight away or up to 90 deg off, each
+        direction also half as far (play_1 episode 10: 25 mm took the blue cube and the rope against the frame): the
+        first push the filter allows that leaves it EDGE_MM from the frame. False (nothing moved) when none."""
+        s = self._on_glass(name, say=False)
+        if s is None:
+            return False
+        print(f"making room at {np.round(q, 3)}: moving {name} away", flush=True)
+        if name == "rope":
+            return self.rope_drag(0, (ROOM_PUSH_MM * cf.MM, 0.0), away_from=q)
+        x0, y0, x1, y1 = cf.GLASS
+        m, t0 = EDGE_MM * cf.MM, np.arctan2(s.xy[1] - q[1], s.xy[0] - q[0])
+        for t, mm in ((t, mm) for t in t0 + np.pi / 4 * np.array([0, 1, -1, 2, -2]) for mm in (ROOM_PUSH_MM, ROOM_PUSH_MM / 2)):
+            d = np.array([np.cos(t), np.sin(t)])
+            f = np.asarray(s.footprint_xy) + d * mm * cf.MM
+            if f[:, 0].min() < x0 + m or f[:, 0].max() > x1 - m or f[:, 1].min() < y0 + m or f[:, 1].max() > y1 - m:
+                continue
+            plan = self._push_plan(name, d, mm, say=False)
+            if plan is not None and self._push_fits(name, plan):
+                return self.push(name, d, mm)
+        print(f"making room: no push of {name} away fits", flush=True)
+        return False
 
     def _free_spot(self, name: str) -> np.ndarray | None:
         """The place nearest CENTRE, EDGE_MM + 10 mm from the frame, that is at least FREE_MM from every other object's
@@ -471,6 +508,13 @@ class Primitives:
                 if plan is not None and self._push_fits(n, plan):
                     cand["push"].append((n, tuple(float(v) for v in d), dist))
                     break
+        for n in PLAY_SLIDE:  # any direction that keeps it and what touches it in; by the frame that is away from it.
+            moved = chain(n) if on(n) else []  # Not asked of the filter here: the grasp makes room first if it must
+            for _ in range(8 if on(n) else 0):
+                d, dist = unit(rng.uniform(0, 2 * np.pi)), float(rng.uniform(*PLAY_PUSH_MM))
+                if all(inside(np.asarray(st[m].footprint_xy) + d * dist * cf.MM) for m in moved):
+                    cand["slide"].append((n, tuple(float(v) for v in d), dist))
+                    break
         end = int(rng.integers(2))
         spot = self._rope_spot(end) if on("rope") else []
         if on("rope") and (not isinstance(spot, list) or self._rope_room(spot, end)):  # a spot fits, or a push makes one
@@ -505,7 +549,7 @@ class Primitives:
             # tips either side of the handle; nearer the round part when the handle's end is at the frame
             # (no handle seen: round part only, every direction)
             a = 0.0 if u is None else np.arctan2(u[1], u[0])
-            spots = [] if u is None else [(disc + u * k * cf.MM, a + np.pi / 2) for k in PAN_HANDLE_MM]
+            spots = [] if u is None else [(disc + u * k * cf.MM, a + np.pi / 2, g) for g in (self.open, *PAN_HANDLE_OPEN) for k in PAN_HANDLE_MM]
             # round part, for a clamp only (it does not lift, prim_27): a fan of directions off the handle (along it,
             # a tip lands on the handle); the filter picks
             fan = [1 / 2, 3 / 8, -3 / 8, 1 / 4, -1 / 4, 1 / 8, -1 / 8] + ([] if u is not None else [0])
@@ -539,7 +583,7 @@ class Primitives:
             reasons.append(verdict.reason)
         else:
             # clutter: push it or a neighbour apart once, then try again (no use when only the frame is in the way)
-            if make_room and any("frame" not in r for r in reasons) and self._make_room(name, reasons):
+            if make_room and any("frame" not in r for r in reasons) and self._make_room(name, reasons, [sp[0] for sp in spots]):
                 return self.grasp(name, make_room=False, lift=lift)
             print(f"grasp {name}: no room for the tips ({verdict.reason}), not tried", flush=True)
             return False

@@ -755,8 +755,14 @@ the time, never into a height change. Larger steps than `PLAY_MAX_DELTA` need th
   On the robot the round part did not lift (prim_27: rose 5 px, the lift check let go), so `slide(name, direction,
   mm)` (Kei, 2026-11-27) clamps it where it lies and slides it along the glass; `reset_objects` slides a pan it can
   neither carry nor push 20 mm towards the centre first. No handle seen in the mask: round part only.
-  When no spot has room for the tips, `_make_room` first pushes the object or a rigid neighbour 25 mm (every candidate
-  push is asked of the filter before anything moves), then the grasp is tried once more.
+  The handle is tried at the usual opening, then at `PAN_HANDLE_OPEN` 0.6 and 0.55 (play_1 episodes 9-10: with the pan
+  8.5 mm from the frame the frame-side tip came down on the frame; at 7 mm, episode 11, nothing fits: a person).
+  When no spot has room for the tips, `_make_room` first takes the spot with the fewest objects in the way, none of
+  them the frame or the object itself, and moves each away from it (`_move_away`: a push straight away or up to 90 deg
+  off, 25 mm or 12.5 mm; the rope is dragged away). Kei, 2026-11-27: clear the space near the pan first (episode 10:
+  the slot by the handle and the blue cube against the pan, no single push left room all round). Else it pushes the
+  object or a rigid neighbour 25 mm. Every push is asked of the filter before anything moves; then the grasp is tried
+  once more.
 - A grasp closes, eases off by `RECLOSE_EASE` and closes again (a fresh command to a gripper stopped by a wide
   object), then checks in the top view that the object rose with the lift (`LIFT_RISE_PX`); if not, it opens (which
   clears "holding") and gives up. Before lowering what is held (`place`, `cube_into_slot`) `_still_held` checks that
@@ -801,7 +807,10 @@ the time, never into a height change. Larger steps than `PLAY_MAX_DELTA` need th
   again, then stops for a person. Runs in primitives_check.py as `scene_check`. Not yet run on the robot.
 - `random_primitive(rng)` for play (Kei, 2026-11-27): the object first, evenly among those with a candidate (with the
   kind first, play_1 episode 5 moved only the white cube), then one of its candidates by `PLAY_WEIGHTS` (pick-and-place,
-  cube into and out of the slot 2; push, rope drag 1); pick-and-place carries the
+  cube into and out of the slot, slide 2; push, rope drag 1); slide is the pan's (`PLAY_SLIDE`; play_1 never used the
+  pan: by the frame it had no push, and contacts took it from 10 to 7 mm), any direction that keeps it and what
+  touches it EDGE_MM + 5 mm from the frame, so by the frame away from it; not asked of the filter at the draw, the
+  grasp makes room first; pick-and-place carries the
   cubes only (`PLAY_CARRY`) until the slot and pan grasps have run supervised; targets keep objects EDGE_MM + 5 mm
   from the frame. Pushes (up to 8 directions per object), rope drags and pushes out of the slot are offered only when
   they fit as the scene is now (play_1: three of five primitives were refused or stopped); about 0.3 s per draw.
