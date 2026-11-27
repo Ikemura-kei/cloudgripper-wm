@@ -780,4 +780,5 @@ The reference is `cloudgripper_wm/self_check_ref/<robot>/`, committed to git (Ke
 keeps everything for diagnosis (Kei): scene_start.npz (tracker states with masks, `scene_tracker.save_states` /
 `load_states`, ~10 KB a scene), raw/ (every picture, retakes included), log.jsonl (numbers per picture), overlays,
 report.txt;
-`tests/test_self_check.py`. robot20: top-height poses recorded and checked once (2026-11-27); height poses not yet.
+`tests/test_self_check.py`. robot20 (2026-11-27): reference complete (13 poses); three checks passed, worst healthy claw 0.987, base 0.946,
+frame 0.1 px, tilt 0.3 deg off; stuck axes simulated from the reference pictures all fail (claw 0.59 at most).
