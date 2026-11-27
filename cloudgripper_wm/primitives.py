@@ -22,6 +22,7 @@ Written for cell 20 and its five objects. ponytail, all of it untested on the ro
 """
 from __future__ import annotations
 
+import copy
 from typing import Callable
 
 import cv2
@@ -70,12 +71,24 @@ EDGE_MM = 10.0             # scene check: closest a rigid object may lie to the 
 PLAY_WEIGHTS = dict(pick_place=2, cube_into_slot=2, cube_out_of_slot=2, push=1, rope_drag=1)  # play: kinds (Kei, 2026-11-27)
 PLAY_CARRY = ("cube_blue", "cube_white")  # play pick_place: cubes only until the slot and pan grasps have run supervised
 PLAY_PUSH_MM, PLAY_DRAG_MM = (10.0, 40.0), (10.0, 30.0)  # play: push and rope-drag distances, drawn uniformly
+PUSH_CLEAR_MM = 5.0  # a push comes down at least this far from every object but the one it pushes. The filter's own
+                     # margin (LOWER_MM, 1.5 mm, small so that open tips go down around a cube) let the closed tips onto
+                     # the white cube's corner behind the pan (play_1, 2026-11-27). First guess
 
 
 def _clear_of(p, outlines, mm: float) -> bool:
     """Is point p (robot x, y) farther than mm from every outline (robot x, y polygons), edges included?"""
     q = tuple(float(v) for v in np.asarray(p, float) / cf.MM)
     return all(cv2.pointPolygonTest(np.float32(np.asarray(o, float) / cf.MM), q, True) < -mm for o in outlines)
+
+
+def _gap_mm(a, b) -> float:
+    """Shortest distance (mm) between two outlines (robot x, y polygons), negative when a corner of one is inside the
+    other. ponytail: two outlines that cross without a corner inside either read as apart; the filter's raster
+    check catches overlaps, this only measures clearance."""
+    a, b = (np.float32(np.asarray(o, float) / cf.MM) for o in (a, b))
+    return float(min(-max(cv2.pointPolygonTest(b, tuple(map(float, p)), True) for p in a),
+                     -max(cv2.pointPolygonTest(a, tuple(map(float, p)), True) for p in b)))
 
 
 def z_for_tip(mm: float) -> float:
@@ -220,17 +233,30 @@ class Primitives:
             return None
         return rot, start, end, tip
 
-    def _push_fits(self, plan) -> bool:
-        """Does the filter allow the lowering behind the object and the push itself, as the scene is now?"""
+    def _push_fits(self, name: str, plan, say: bool = False) -> bool:
+        """Does the filter allow the lowering behind `name` and the push itself, as the scene is now, with the tips
+        coming down PUSH_CLEAR_MM from every other object?"""
         rot, start, end, tip = plan
         over, z = [*self._cmd(start, rot).values(), 1.0, rot, self.closed], z_for_tip(tip)
         down = [*over[:2], z, rot, self.closed]
-        return cf.check(over, down, self.env.states).allowed and cf.check(down, [*self._cmd(end, rot).values(), z, rot, self.closed], self.env.states).allowed
+        why = ""
+        for n, s in self.env.states.items():  # first: it is cheap, the filter's checks are not (~16 ms each)
+            if not why and n != name and getattr(s, "footprint_xy", None) is not None:
+                g = min(_gap_mm(f, s.footprint_xy) for f in cf.finger_polys(down))
+                why = f"the tips would come down {g:.1f} mm from {n} (needs {PUSH_CLEAR_MM:.0f})" if g < PUSH_CLEAR_MM else ""
+        for a, b in ((over, down), (down, [*self._cmd(end, rot).values(), z, rot, self.closed])):
+            v = cf.check(a, b, self.env.states) if not why else None
+            why = why or ("" if v.allowed else v.reason)
+        if why and say:
+            print(f"push {name}: {why}, not tried", flush=True)
+        return not why
 
     def push(self, name: str, direction, dist_mm: float) -> bool:
-        """Push `name` by dist_mm along `direction` (robot x, y) with the closed gripper held across the direction."""
+        """Push `name` by dist_mm along `direction` (robot x, y) with the closed gripper held across the direction.
+        Asked of the filter first (`_push_fits`): one it would stop is not tried, nothing moves (play_1: two pushes
+        went down and were stopped on the way)."""
         plan = self._push_plan(name, direction, dist_mm)
-        if plan is None:
+        if plan is None or not self._push_fits(name, plan, say=True):
             return False
         rot, start, end, tip = plan
         return self._run(f"push {name}", [("up", dict(z=1.0)), ("close", dict(grip=self.closed)), ("turn", dict(rot=rot)),
@@ -245,11 +271,8 @@ class Primitives:
         ponytail: the room afterwards is predicted by shifting the pushed outline only; what it pushes along is
         ignored, and the rope is never the one moved. Two objects that touch usually leave no push that fits."""
         st = {n: s for n, s in self.env.states.items() if s.status == "on_glass" and s.footprint_xy is not None}
-        mm = lambda fp: np.float32(np.asarray(fp) / cf.MM)
-        gap = lambda a, b: min(-max(cv2.pointPolygonTest(b, tuple(map(float, p)), True) for p in a),
-                               -max(cv2.pointPolygonTest(a, tuple(map(float, p)), True) for p in b))
         x0, y0, x1, y1 = cf.GLASS
-        near = [n for n in st if n not in (name, "rope") and gap(mm(st[name].footprint_xy), mm(st[n].footprint_xy)) < 20]
+        near = [n for n in st if n not in (name, "rope") and _gap_mm(st[name].footprint_xy, st[n].footprint_xy) < 20]
         best = (ROOM_MM, None)
         for mover in [name, *near]:
             for t in np.arange(0, 2 * np.pi, np.pi / 4):
@@ -258,10 +281,10 @@ class Primitives:
                 f = fps[mover]
                 if f[:, 0].min() < x0 + 0.07 or f[:, 0].max() > x1 - 0.07 or f[:, 1].min() < y0 + 0.07 or f[:, 1].max() > y1 - 0.07:
                     continue  # would end within 10 mm of the frame
-                room = min(gap(mm(fps[name]), mm(fps[n])) for n in fps if n != name)
+                room = min(_gap_mm(fps[name], fps[n]) for n in fps if n != name)
                 if room > best[0]:
                     plan = self._push_plan(mover, d, ROOM_PUSH_MM, say=False)
-                    if plan is not None and self._push_fits(plan):
+                    if plan is not None and self._push_fits(mover, plan):
                         best = (room, (mover, d))
         if best[1] is None:
             return False
@@ -377,12 +400,18 @@ class Primitives:
         if on("slot") and not notch:
             cand["cube_into_slot"] += [(n,) for n in cubes if on(n)]
         cand["cube_out_of_slot"] += [(n, "push") for n in notch]
+        cand["cube_out_of_slot"] = [c for c in cand["cube_out_of_slot"] if not isinstance(self._notch_push(c[0]), str)]
         for n in ("cube_blue", "cube_white", "slot", "pan"):
-            d, dist = unit(rng.uniform(0, 2 * np.pi)), float(rng.uniform(*PLAY_PUSH_MM))
-            if on(n) and inside(np.asarray(st[n].footprint_xy) + d * dist * cf.MM):
-                cand["push"].append((n, tuple(float(v) for v in d), dist))
-        if on("rope"):
-            cand["rope_drag"].append((int(rng.integers(2)), tuple(float(v) for v in unit(rng.uniform(0, 2 * np.pi)) * rng.uniform(*PLAY_DRAG_MM) * cf.MM)))
+            for _ in range(8 if on(n) else 0):  # directions drawn until one the filter allows (play_1: two were stopped)
+                d, dist = unit(rng.uniform(0, 2 * np.pi)), float(rng.uniform(*PLAY_PUSH_MM))
+                plan = self._push_plan(n, d, dist, say=False) if inside(np.asarray(st[n].footprint_xy) + d * dist * cf.MM) else None
+                if plan is not None and self._push_fits(n, plan):
+                    cand["push"].append((n, tuple(float(v) for v in d), dist))
+                    break
+        end = int(rng.integers(2))
+        spot = self._rope_spot(end) if on("rope") else []
+        if on("rope") and (not isinstance(spot, list) or self._rope_room(spot, end)):  # a spot fits, or a push makes one
+            cand["rope_drag"].append((end, tuple(float(v) for v in unit(rng.uniform(0, 2 * np.pi)) * rng.uniform(*PLAY_DRAG_MM) * cf.MM)))
         kinds = [k for k in PLAY_WEIGHTS if cand[k]]
         if not kinds:
             return None
@@ -663,27 +692,66 @@ class Primitives:
             out.append((p, float(np.arctan2(v[1], v[0])) if np.linalg.norm(v) > 1e-6 else 0.0))
         return out
 
-    def rope_drag(self, end: int, delta_xy) -> bool:
-        """Grasp the rope near end 0 or 1 (tips across the rope), drag it by delta_xy at the glass, let go. The grasp
-        point is the first one, from 12 mm in and then every ROPE_STEP_MM along the whole rope, where the filter lets
-        the open tips go down (a rope lying along the frame is taken where it leaves it); none: nothing is done."""
-        if self._on_glass("rope") is None:
-            return False
-        fp = np.asarray(self.env.states["rope"].footprint_xy)
+    def _rope_spot(self, end: int, states=None):
+        """(tips' midpoint, rot, mm from end `end`) of the first spot along the rope, from 12 mm in and then every
+        ROPE_STEP_MM, where the filter lets the open tips go down in `states` (default: the scene now); or, when none
+        does, the list of its reasons."""
+        states = self.env.states if states is None else states
+        fp = np.asarray(states["rope"].footprint_xy)
         length_mm = np.linalg.norm(fp[:, None] - fp[None], axis=2).max() / cf.MM
         reasons = []
         for k in np.arange(12.0, length_mm - 11, ROPE_STEP_MM):
             p, along = self._rope_ends(k)[end]
             rot = ((along + np.pi / 2) % np.pi) / np.pi
             over = [*self._cmd(p, rot).values(), 1.0, rot, self.open]
-            verdict = cf.check(over, [*over[:2], 0.0, rot, self.open], self.env.states)
+            verdict = cf.check(over, [*over[:2], 0.0, rot, self.open], states)
             if verdict.allowed:
-                break
+                return p, rot, k
             reasons.append(verdict.reason)
-        else:
-            why = "; ".join(f"{r} ({reasons.count(r)}x)" for r in dict.fromkeys(reasons))
-            print(f"rope drag: no room for the tips anywhere along the rope ({length_mm:.0f} mm, {len(reasons)} spots: {why}), not tried", flush=True)
+        return reasons
+
+    def _rope_room(self, reasons: list[str], end: int):
+        """(object, direction) of a ROOM_PUSH_MM push after which the open tips fit somewhere along the rope, or None.
+        The objects under the tips (`_rope_spot`'s reasons), most often first, each in eight directions starting
+        with the one towards CENTRE; taken when the push fits and the rope has a spot with that object moved (Kei,
+        2026-11-27: in play_1 the slot lay in the rope's bend, the frame outside it; towards the centre is often
+        not possible there, the push would come down on the rope).
+        ponytail: only the pushed object's outline is moved, as in _make_room; what it pushes along is ignored."""
+        names = [n for r in reasons if "onto " in r for n in r.split("onto ", 1)[1].split(", ") if n != "rope"]
+        for n in sorted(set(names), key=names.count, reverse=True):
+            s = self._on_glass(n, say=False)
+            if s is None:
+                continue  # "the frame", or not on the glass
+            t0 = np.arctan2(CENTRE[1] - s.xy[1], CENTRE[0] - s.xy[0])
+            for k in (0, 1, -1, 2, -2, 3, -3, 4):
+                d = np.array([np.cos(t0 + k * np.pi / 4), np.sin(t0 + k * np.pi / 4)])
+                plan = self._push_plan(n, d, ROOM_PUSH_MM, say=False)
+                if plan is None or not self._push_fits(n, plan):
+                    continue
+                moved = dict(self.env.states)
+                moved[n] = copy.copy(s)
+                moved[n].footprint_xy = np.asarray(s.footprint_xy) + d * ROOM_PUSH_MM * cf.MM
+                if not isinstance(self._rope_spot(end, moved), list):
+                    return n, tuple(float(v) for v in d)
+        return None
+
+    def rope_drag(self, end: int, delta_xy) -> bool:
+        """Grasp the rope near end 0 or 1 (tips across the rope), drag it by delta_xy at the glass, let go. The grasp
+        point is the first one, from 12 mm in and then every ROPE_STEP_MM along the whole rope, where the filter lets
+        the open tips go down (a rope lying along the frame is taken where it leaves it); none: nothing is done."""
+        if self._on_glass("rope") is None:
             return False
+        spot = self._rope_spot(end)
+        room = self._rope_room(spot, end) if isinstance(spot, list) else None
+        if room:
+            print(f"rope drag: no room for the tips along the rope, making room by pushing {room[0]}", flush=True)
+            if self.push(room[0], room[1], ROOM_PUSH_MM):
+                spot = self._rope_spot(end)
+        if isinstance(spot, list):
+            why = "; ".join(f"{r} ({spot.count(r)}x)" for r in dict.fromkeys(spot))
+            print(f"rope drag: no room for the tips anywhere along the rope ({len(spot)} spots: {why}), not tried", flush=True)
+            return False
+        p, rot, k = spot
         ok = self._run("rope drag", [("up", dict(z=1.0)), ("open", dict(grip=self.open)), ("turn", dict(rot=rot)),
                                      (f"over the rope {k:.0f} mm from the end", self._cmd(p, rot)), ("down", dict(z=0.0)), ("close", dict(grip=self.closed))])
         if ok and "rope" not in self.env.held:

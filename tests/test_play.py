@@ -58,7 +58,7 @@ def test_collect(setup):
         assert 0 < n and z["state"].shape == (n + 1, 5) and z["action"].shape == (n, 5)
         assert len(list((ep / "frames").glob("*_top.jpg"))) == n + 1 == len(list((ep / "states").glob("*.npz")))
         diag = [json.loads(l) for l in (ep / "diag.jsonl").read_text().splitlines()]
-        assert len(diag) == n and all(d["verdict"] and len(d["executed"]) == 5 for d in diag)
+        assert sum(not d["blocked"] for d in diag) == n and all(d["verdict"] and len(d["executed"]) == 5 for d in diag)
         frames += n + 1
     events = [json.loads(l)["event"] for l in (out / "session.jsonl").read_text().splitlines()]
     assert events.count("episode") == 2 and events.count("episode_end") == 2 and "stop" not in events
@@ -78,6 +78,11 @@ def test_collect(setup):
     n = len(list((out / "episodes").glob("ep_*")))
     assert collect(prim, rec, out, 1, np.random.default_rng(4), check=check).startswith("scene not fit after a reset")
     assert len(list((out / "episodes").glob("ep_*"))) == n
+    # a step the filter blocked is in diag.jsonl only (Kei: zero action, unchanged scene)
+    rec.start(99)
+    assert not prim.goto("test: blocked (the pan is unaccounted for)", z=0.9)
+    assert rec.end() == 0 and len(list((out / "episodes/ep_00099/frames").glob("*_top.jpg"))) == 1
+    assert [json.loads(l)["blocked"] for l in (out / "episodes/ep_00099/diag.jsonl").read_text().splitlines()] == [True]
 
 
 def test_play_to_lance(tmp_path):

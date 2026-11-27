@@ -19,7 +19,10 @@ The session folder `out`:
                              steps.npz      state (commanded pose per frame), action (executed delta per step);
                                             written when the episode ends: a folder without it is incomplete
                              diag.jsonl     per step: label (primitive and phase), requested and executed action,
-                                            the collision filter's verdict, held, commanded and reported pose
+                                            the collision filter's verdict, held, commanded and reported pose. A step
+                                            the filter blocked is here only (blocked: true, step = the frame it was
+                                            tried from), not in frames/ or steps.npz: its action is zero and the scene
+                                            unchanged (Kei, 2026-11-27)
                              states/NNNN.npz  the tracker's states with masks per frame (`save_states`)
     self_checks/NNN_a/       each self-check's folder (`self_check`)
 Training data is made from frames and steps.npz only (`scripts/data/play_to_lance.py`); the rest is diagnostics
@@ -74,6 +77,8 @@ class Recorder:
         self.diag.write(json.dumps(dict(step=self.n, t=time.time(), label=label, requested=e.last_requested, executed=e.last_action,
                                         verdict=e.last_verdict, blocked=blocked, held=list(e.held), commanded=u._target_pos,
                                         reported=reported), default=_json) + "\n")
+        if blocked:  # zero action, unchanged scene: diagnostics only (Kei, 2026-11-27)
+            return
         self.action.append(e.last_action.copy())
         self.n += 1
         self._frame()

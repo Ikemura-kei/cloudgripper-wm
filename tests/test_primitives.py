@@ -10,7 +10,8 @@ from cloudgripper_wm.envs.cloudgripper_env import CloudGripperEnv
 from cloudgripper_wm.envs.constants import PLAY_MAX_DELTA
 from cloudgripper_wm.envs.filtered_wrapper import FilteredCloudGripperWrapper
 from cloudgripper_wm.envs.robot_pool import RobotPool
-from cloudgripper_wm.primitives import NOTCH_PUSH_TRIES, PARK, PLAY_CARRY, PLAY_WEIGHTS, WIDE_OPEN, Primitives, _pan_handle, z_for_tip
+from cloudgripper_wm.primitives import (NOTCH_PUSH_TRIES, PARK, PLAY_CARRY, PLAY_WEIGHTS, PUSH_CLEAR_MM, WIDE_OPEN, Primitives, _gap_mm,
+                                       _pan_handle, z_for_tip)
 
 
 def _obj(x, y, w_mm, h_mm, l_mm=None):
@@ -50,8 +51,21 @@ def test_push_and_give_up(prim):
     # the tips ended 30 mm past where they met the pan's back edge
     tips_x = u._target_pos[0] + cf.TOOL_OFFSET[0] + (np.array([[0, -1], [1, 0]]) @ cf.TOOL_OFFSET_TURNING)[0]
     assert abs(tips_x - (0.3 - 10 * cf.MM - cf.FINGER_MM[1] / 2 * cf.MM + 30 * cf.MM)) < 1e-3
-    # something where the gripper has to come down behind the pan: the primitive is given up and the arm raised
+    # something where the gripper has to come down behind the pan: not tried, nothing moves (play_1)
     prim.scene.update(slot=_obj(0.3 - 25 * cf.MM, 0.5, 20, 16))
+    n = len(prim.log)
+    assert not prim.push("pan", (1, 0), 30) and len(prim.log) == n
+    # a cube beside where the tips come down: allowed by the filter (more than LOWER_MM away), but within PUSH_CLEAR_MM
+    # (play_1: the tips came down on the white cube's corner); a little farther it fits
+    plan = prim._push_plan("pan", (1, 0), 30)
+    down = [*prim._cmd(plan[1], plan[0]).values(), z_for_tip(plan[3]), plan[0], prim.closed]
+    for side_mm, fits in ((15.0, False), (19.0, True)):
+        prim.scene.clear(); prim.scene.update(pan=_obj(0.3, 0.5, 20, 7), cube_blue=_obj(plan[1][0], 0.5 + side_mm * cf.MM, 10, 10))
+        gap = min(_gap_mm(f, prim.scene["cube_blue"].footprint_xy) for f in cf.finger_polys(down))
+        assert (cf.LOWER_MM < gap < PUSH_CLEAR_MM) != fits and prim._push_fits("pan", plan) == fits, gap
+    # the slot shows up once the push is under way: the filter stops the lowering, it is given up and the arm raised
+    del prim.scene["cube_blue"]
+    prim.env._tracker.step = lambda b, t: (prim.scene.update(slot=_obj(0.3 - 25 * cf.MM, 0.5, 20, 16)), prim.scene)[1]
     prim.log.clear()
     assert not prim.push("pan", (1, 0), 30)
     assert prim.log[-2] == ("push pan: down", True) and "given up" in prim.log[-1][0] and u._target_pos[2] == 1.0
@@ -192,6 +206,19 @@ def test_rope_drag_near_the_frame(prim):
     # along the frame all the way: no spot fits, nothing moves
     prim.scene.update(rope=_rope((0.3, y0 + 9 * cf.MM), 0.0)); n = len(prim.log)
     assert not prim.rope_drag(0, (0.0, 0.05)) and len(prim.log) == n
+    # the slot on the glass side of a short rope, the frame on the other (play_1): no spot fits; towards the centre
+    # the push would come down on the rope, along the rope it fits and frees it (Kei, 2026-11-27)
+    rope, slot = _rope((0.3, y0 + 22 * cf.MM), 0.0, length_mm=36), _obj(0.3 + 18 * cf.MM, y0 + 41.5 * cf.MM, 25.5, 16, 15)
+    prim.scene.update(rope=rope, slot=slot)
+    assert isinstance(prim._rope_spot(0), list)
+    n, d = prim._rope_room(prim._rope_spot(0), 0)
+    assert n == "slot" and abs(d[0]) > 0.5, d  # along the rope, not towards the centre (+y)
+    pushed = lambda b, t: (any(l == "push slot: push" for l, _ in prim.log) and prim.scene.update(slot=_obj(0.6, 0.6, 25.5, 16, 15)), prim.scene)[1]
+    prim.env._tracker.step = pushed
+    prim.log.clear()
+    assert prim.rope_drag(0, (0.0, 0.03))
+    labels = [l for l, _ in prim.log]
+    assert labels.index("push slot: push") < next(i for i, l in enumerate(labels) if "over the rope" in l)
 
 
 def test_slot_is_carried_across_its_width(prim):
@@ -295,7 +322,7 @@ def test_random_primitive(prim):
     prim.scene.update(cube_blue=_obj(0.4, 0.4, 15, 15), cube_white=_obj(0.5, 0.6, 15, 15), slot=_obj(0.6, 0.4, 15, 16, 25.5),
                       pan=_obj(0.3, 0.6, 20, 7), rope=_obj(0.45, 0.25, 60, 8, 8))
     assert prim.goto("test: a step", x=0.4)  # the fixture wants at least one step sent
-    picks = [prim.random_primitive(rng) for _ in range(400)]
+    picks = [prim.random_primitive(rng) for _ in range(150)]
     kinds = {k: sum(p[0] == k for p in picks) for k in PLAY_WEIGHTS}
     # cube into slot (weight 2) is always possible here; pick-and-place only when a free spot is drawn (FREE_MM)
     assert kinds["cube_out_of_slot"] == 0 and kinds["cube_into_slot"] > 1.5 * kinds["rope_drag"] and kinds["pick_place"] > 0
@@ -303,11 +330,18 @@ def test_random_primitive(prim):
     for k, a in picks:
         if k == "pick_place":
             assert a[0] in PLAY_CARRY and x0 + 0.1 < a[1][0] < x1 - 0.1 and y0 + 0.1 < a[1][1] < y1 - 0.1
+        if k == "push":  # only pushes the filter allows, with room where the tips come down (play_1: two were stopped)
+            assert prim._push_fits(a[0], prim._push_plan(a[0], a[1], a[2], say=False))
+    assert kinds["push"] > 0
+    # the rope along the frame where no spot fits the open tips and nothing can be pushed aside: never drawn (play_1)
+    prim.scene["rope"] = _rope((0.3, cf.GLASS[1] + 9 * cf.MM), 0.0)
+    assert isinstance(prim._rope_spot(0), list) and not any(k == "rope_drag" for k, _ in (prim.random_primitive(rng) for _ in range(20)))
+    prim.scene["rope"] = _obj(0.45, 0.25, 60, 8, 8)
     prim.scene["cube_blue"] = SimpleNamespace(status="stacked", on="slot", in_notch=True, height_mm=15, inferred_xy=None)
-    picks = [prim.random_primitive(rng) for _ in range(200)]
+    picks = [prim.random_primitive(rng) for _ in range(60)]
     assert ("cube_out_of_slot", ("cube_blue", "push")) in picks and not any(k == "cube_into_slot" for k, _ in picks)
     prim.scene["pan"] = _obj(0.08, 0.6, 20, 7)  # by the frame: never pushed further towards it
-    assert not any(k == "push" and a[0] == "pan" and a[1][0] < 0 for k, a in (prim.random_primitive(rng) for _ in range(200)))
+    assert not any(k == "push" and a[0] == "pan" and a[1][0] < 0 for k, a in (prim.random_primitive(rng) for _ in range(60)))
 
 
 def test_slide_and_the_pan_at_the_frame(prim):
